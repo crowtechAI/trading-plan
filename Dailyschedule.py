@@ -7,6 +7,8 @@ import pytz
 import subprocess
 import sys
 import os
+import asyncio
+from playwright.sync_api import sync_playwright
 
 # --- CONFIGURATION ---
 st.set_page_config(
