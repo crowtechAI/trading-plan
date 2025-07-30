@@ -1,5 +1,4 @@
-streamlit
 pandas
 pytz
-beautifulsoup4
-requests
+selenium
+webdriver_manager
