@@ -1,2 +1,5 @@
 chromium-browser
 chromium-chromedriver
+build-essential
+pkg-config
+default-libmysqlclient-dev
