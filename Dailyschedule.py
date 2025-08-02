@@ -215,71 +215,72 @@ def main():
     # --- Sidebar for Data Loading ---
     st.sidebar.header("⚙️ Data Controls")
     scrape_option = st.sidebar.radio("Select Scrape Duration", ('Current Trading Week', 'Current Month'), help="This will run the scraper for the selected period.")
-    if st.sidebar.button("🚀 Fetch Live Data", type="primary", use_container_width=True):
-        args = ["--week"] if scrape_option == 'Current Trading Week' else []
-        command = [sys.executable, "ffscraper.py"] + args
-        with st.spinner(f"Running scraper for '{scrape_option}'... This may take a moment."):
-            try:
-                process = subprocess.run(command, capture_output=True, text=True, check=True, encoding='utf-8')
-                st.sidebar.success("Scraper finished successfully!")
-                with st.sidebar.expander("Show Scraper Log"): st.code(process.stdout)
-                st.rerun()
-            except subprocess.CalledProcessError as e:
-                st.error("The scraper script failed to run."); st.text("Error from scraper:"); st.code(e.stderr)
-            except FileNotFoundError:
-                st.error("Error: 'ffscraper.py' not found. Ensure it's in the same directory.")
+    # Replace the scraper execution section in your main() function
 
-    st.sidebar.info("Click 'Fetch Live Data' to get the latest economic events.")
-    st.sidebar.markdown("---")
-
-    # --- Main Analysis Area ---
-    col1, col2 = st.columns([2, 2]);
-    with col1: selected_date = st.date_input("📅 Analysis Date", value=date.today())
-    with col2: view_option = st.radio("👁️ View", ["Today", "Week"], horizontal=True)
-
-    if os.path.exists(SCRAPED_DATA_PATH):
+if st.sidebar.button("🚀 Fetch Live Data", type="primary", use_container_width=True):
+    args = ["--week"] if scrape_option == 'Current Trading Week' else []
+    command = [sys.executable, "ffscraper.py"] + args
+    
+    with st.spinner(f"Running scraper for '{scrape_option}'... This may take a moment."):
         try:
-            df = pd.read_csv(SCRAPED_DATA_PATH)
-            csv_data = df.to_dict('records')
-            if not csv_data:
-                st.warning("Data file is empty. Please run the scraper again."); return
-
-            get_events = lambda target: [row for row in csv_data if parse_date(row.get('date', '')) == target]
-            if view_option == "Today":
-                events = get_events(selected_date)
-                if not events: st.warning(f"No events found for {selected_date.strftime('%A, %B %d, %Y')}"); return
-                plan, reason, morning, afternoon, all_day = analyze_day_events(selected_date, events)
-                display_plan_card(plan, reason); display_action_checklist(plan); st.markdown("---")
-                st.markdown("## 📅 Today's Events Timeline")
-                c1, c2 = st.columns(2)
-                with c1: display_timeline_events(morning, "🌅 Morning (Before 12:00 PM)")
-                with c2: display_timeline_events(afternoon, "🌇 Afternoon (After 12:00 PM)")
-                if all_day: display_timeline_events(all_day, "📅 All Day Events")
+            # Set environment variables for Streamlit Cloud detection
+            env = os.environ.copy()
+            env['STREAMLIT'] = 'true'
+            
+            process = subprocess.run(
+                command, 
+                capture_output=True, 
+                text=True, 
+                check=True, 
+                encoding='utf-8',
+                env=env,
+                timeout=300  # 5 minute timeout
+            )
+            
+            st.sidebar.success("✅ Scraper finished successfully!")
+            
+            # Show output if available
+            if process.stdout:
+                with st.sidebar.expander("📋 Show Scraper Log"):
+                    st.code(process.stdout)
+            
+            # Check if the data file was created
+            if os.path.exists(SCRAPED_DATA_PATH):
+                st.sidebar.success(f"📄 Data file created: {SCRAPED_DATA_PATH}")
+                st.rerun()
             else:
-                st.markdown("## 🗓 Weekly Outlook")
-                start_of_week = selected_date - timedelta(days=selected_date.weekday())
-                for i in range(5):
-                    day = start_of_week + timedelta(days=i)
-                    events = get_events(day)
-                    c1, c2, c3 = st.columns([2, 3, 2])
-                    with c1: st.markdown(f"**{day.strftime('%a %m/%d')}**")
-                    with c2:
-                        if events:
-                            plan, _, _, _, _ = analyze_day_events(day, events)
-                            if plan == "No Trade Day": st.error("🚫 No Trade")
-                            elif plan == "News Day Plan": st.warning("📰 News Day")
-                            else: st.success("✅ Standard")
-                        else: st.info("📅 No Events")
-                    with c3:
-                        if events:
-                            count = sum(1 for e in events if 'High' in parse_impact(e.get('impact', '')) and e.get('currency', '').upper() == 'USD')
-                            if count > 0: st.markdown(f"🔴 {count} High USD")
+                st.sidebar.warning("⚠️ Scraper completed but no data file found")
+                
+        except subprocess.TimeoutExpired:
+            st.sidebar.error("⏰ Scraper timed out after 5 minutes")
+            st.sidebar.info("💡 Try using a shorter time period or check your internet connection")
+            
+        except subprocess.CalledProcessError as e:
+            st.sidebar.error("❌ The scraper script failed to run")
+            
+            # Show detailed error information
+            with st.sidebar.expander("🔍 Show Error Details", expanded=True):
+                st.text("Return code: " + str(e.returncode))
+                if e.stderr:
+                    st.text("Error output:")
+                    st.code(e.stderr)
+                if e.stdout:
+                    st.text("Standard output:")
+                    st.code(e.stdout)
+            
+            # Provide helpful suggestions
+            st.sidebar.info("💡 Troubleshooting tips:\n" +
+                          "- Wait a few minutes and try again\n" +
+                          "- Try the 'Current Trading Week' option for less data\n" +
+                          "- Check if the website is accessible")
+                          
+        except FileNotFoundError:
+            st.sidebar.error("❌ Error: 'ffscraper.py' not found")
+            st.sidebar.info("📁 Ensure the scraper file is in the same directory as this app")
+            
         except Exception as e:
-            st.error(f"Error processing data file '{SCRAPED_DATA_PATH}': {str(e)}")
-    else:
-        st.info("👋 Welcome! Click **Fetch Live Data** in the sidebar to begin.")
-        st.markdown("---")
-        st.markdown("## 📋 Sample Action Checklist"); display_action_checklist("Standard Day Plan")
+            st.sidebar.error(f"❌ Unexpected error: {str(e)}")
+            st.sidebar.info("🔄 Try refreshing the page and running again")
 
 if __name__ == "__main__":
     main()
