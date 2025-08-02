@@ -24,9 +24,9 @@ from selenium.common.exceptions import TimeoutException, WebDriverException, NoS
 # Configuration
 BASE_URL = "https://www.forexfactory.com/calendar"
 OUTPUT_FILE = "latest_forex_data.csv"
-TIMEOUT = 30
-RETRY_ATTEMPTS = 3
-RETRY_DELAY = 5
+TIMEOUT = 45  # Increased timeout for cloud environments
+RETRY_ATTEMPTS = 2 # Reduced retries to fail faster during debugging
+RETRY_DELAY = 10
 
 # Element type mappings for proper data extraction
 ALLOWED_ELEMENT_TYPES = {
@@ -64,35 +64,19 @@ def init_driver():
     options.add_argument('--disable-gpu')
     options.add_argument('--window-size=1920,1080')
     options.add_argument('--disable-extensions')
-    options.add_argument('--disable-plugins')
-    options.add_argument('--disable-images')
+    options.add_argument("--disable-images")
     options.add_argument('--remote-debugging-port=9222')
-    options.add_argument('--disable-background-timer-throttling')
-    options.add_argument('--disable-backgrounding-occluded-windows')
-    options.add_argument('--disable-renderer-backgrounding')
-    options.add_argument('--disable-features=TranslateUI')
-    options.add_argument('--disable-default-apps')
-    options.add_argument('--disable-web-security')
-    options.add_argument('--disable-features=VizDisplayCompositor')
     
-    # Additional options to avoid detection and improve compatibility
+    # Options to avoid detection
     options.add_argument('--disable-blink-features=AutomationControlled')
-    options.add_argument('--no-first-run')
-    options.add_argument('--disable-infobars')
-    options.add_argument('--disable-notifications')
-    options.add_argument('--disable-popup-blocking')
+    options.add_argument('--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/108.0.0.0 Safari/537.36')
     
-    # User agent to avoid detection
-    options.add_argument('--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36')
-    
-    # Exclude automation switches
     options.add_experimental_option("excludeSwitches", ["enable-automation"])
     options.add_experimental_option('useAutomationExtension', False)
     
     try:
         if is_streamlit_cloud():
             print("Detected Streamlit Cloud environment")
-            options.binary_location = '/usr/bin/chromium'
             service = Service('/usr/bin/chromedriver')
         else:
             print("Detected local environment")
@@ -110,61 +94,32 @@ def init_driver():
         return driver
         
     except Exception as e:
-        print(f"Error initializing WebDriver: {str(e)}")
-        # Fallback
-        try:
-            print("Attempting fallback initialization...")
-            options = Options()
-            options.add_argument('--headless')
-            options.add_argument('--no-sandbox')
-            options.add_argument('--disable-dev-shm-usage')
-            
-            if is_streamlit_cloud():
-                options.binary_location = '/usr/bin/chromium'
-                service = Service('/usr/bin/chromedriver')
-            else:
-                service = Service()
-                
-            driver = webdriver.Chrome(service=service, options=options)
-            print("Fallback WebDriver initialized successfully")
-            return driver
-            
-        except Exception as fallback_error:
-            print(f"Fallback also failed: {str(fallback_error)}")
-            raise Exception(f"Could not initialize WebDriver. Original error: {str(e)}, Fallback error: {str(fallback_error)}")
+        print(f"Fatal error initializing WebDriver: {str(e)}")
+        raise
 
 def convert_gmt_to_gmt_minus_5(time_str, date_str):
     """Convert GMT time to GMT-5, accounting for daylight saving time"""
     if not time_str or time_str == "empty" or not date_str or date_str == "empty":
         return time_str
     
-    # Handle special time values that aren't actual times
     special_times = ["all day", "day 1", "day 2", "tentative", "holiday", "tbd"]
     if time_str.lower() in special_times:
         return time_str
     
     try:
-        # Parse the date (DD/MM/YYYY format)
         date_obj = datetime.strptime(date_str, "%d/%m/%Y").date()
         
-        # Parse the time string
         if "am" in time_str.lower() or "pm" in time_str.lower():
             time_obj = datetime.strptime(time_str, "%I:%M%p").time()
         else:
             time_obj = datetime.strptime(time_str, "%H:%M").time()
         
-        # Combine date and time
         gmt_datetime = datetime.combine(date_obj, time_obj)
+        gmt_datetime = pytz.UTC.localize(gmt_datetime)
         
-        # Set timezone to UTC (same as GMT)
-        utc_tz = pytz.UTC
-        gmt_datetime = utc_tz.localize(gmt_datetime)
-        
-        # Convert to GMT-5 Time
         gmt_minus_5_tz = pytz.timezone('Etc/GMT+5')
         gmt_minus_5_datetime = gmt_datetime.astimezone(gmt_minus_5_tz)
         
-        # Format back to 12-hour format
         return gmt_minus_5_datetime.strftime("%I:%M%p").lower().lstrip('0')
         
     except (ValueError, TypeError) as e:
@@ -174,20 +129,16 @@ def convert_gmt_to_gmt_minus_5(time_str, date_str):
 def get_current_week_range():
     """Get the Monday-Friday range for the current trading week"""
     today = datetime.now()
-    current_weekday = today.weekday()  # Monday is 0, Sunday is 6
+    current_weekday = today.weekday()
     
-    if current_weekday >= 5:  # Saturday (5) or Sunday (6)
-        # Get next Monday (start of next week)
+    if current_weekday >= 5:
         days_until_monday = 7 - current_weekday
         monday = today + timedelta(days=days_until_monday)
-    else:  # Monday (0) to Friday (4)
-        # Get Monday of current week
+    else:
         days_since_monday = current_weekday
         monday = today - timedelta(days=days_since_monday)
     
-    # Calculate Friday of that week
     friday = monday + timedelta(days=4)
-    
     return monday.date(), friday.date()
 
 def is_date_in_current_week(date_str, week_start, week_end):
@@ -198,165 +149,111 @@ def is_date_in_current_week(date_str, week_start, week_end):
     except (ValueError, TypeError):
         return False
 
-def scroll_to_end(driver):
-    """Scroll to the end of the page to load all content"""
-    previous_position = None
-    while True:
-        current_position = driver.execute_script("return window.pageYOffset;")
-        driver.execute_script("window.scrollTo(0, window.pageYOffset + 500);")
-        time.sleep(1.5)
-        if current_position == previous_position:
-            break
-        previous_position = current_position
-
 def clean_cell_text(element):
     """Extract clean text from table cells, handling special cases"""
     try:
-        # Specifically handle the impact cell by checking the span's title
         if "calendar__impact" in element.get_attribute("class"):
             impact_span = element.find_element(By.TAG_NAME, "span")
-            if impact_span:
-                return impact_span.get_attribute("title").replace(" Impact Expected", "")
+            return impact_span.get_attribute("title").replace(" Impact Expected", "")
         
         text = element.get_attribute("innerText")
-        if text:
-            return text.strip()
-        spans = element.find_elements(By.TAG_NAME, "span")
-        if spans:
-            return spans[0].text.strip()
-        return "empty"
+        return text.strip() if text else "empty"
     except:
         return "empty"
-
-def wait_for_page_load(driver, timeout=TIMEOUT):
-    """Wait for the page to fully load"""
-    try:
-        WebDriverWait(driver, timeout).until(
-            lambda d: d.execute_script("return document.readyState") == "complete"
-        )
-        time.sleep(3)  # Additional wait for dynamic content
-        
-        try:
-            WebDriverWait(driver, 10).until(
-                EC.presence_of_element_located((By.CLASS_NAME, "calendar__table"))
-            )
-        except TimeoutException:
-            print("Calendar table not found immediately, but continuing...")
-        
-        return True
-    except TimeoutException:
-        print("Page load timeout")
-        return False
 
 def scrape_calendar_data(driver, month, year, week_filter=False):
     """Scrape economic calendar data from Forex Factory"""
     print(f"Scraping data for {month} {year}")
     
-    # Build URL
-    if week_filter:
-        week_start, week_end = get_current_week_range()
-        today = datetime.now()
-        
-        if today.weekday() >= 5 and week_start.month != today.month:
-            url_param = week_start.strftime("%B").lower()
-        else:
-            url_param = "this"
-    else:
-        url_param = "this" if month.lower() == datetime.now().strftime("%B").lower() else month.lower()
-    
-    url = f"{BASE_URL}?month={url_param}"
+    url = f"{BASE_URL}?month=this"
     print(f"Navigating to: {url}")
-    
     driver.get(url)
-    
-    if not wait_for_page_load(driver):
-        raise Exception("Failed to load calendar page")
-    
-    # Scroll to load all content
-    scroll_to_end(driver)
-    
+
+    try:
+        # First, try to find and click the "Accept all" cookie button
+        print("Looking for cookie consent button...")
+        cookie_button = WebDriverWait(driver, 15).until(
+            EC.element_to_be_clickable((By.XPATH, "//button[contains(text(), 'Accept all')]"))
+        )
+        cookie_button.click()
+        print("Clicked cookie consent button.")
+        time.sleep(3) # Wait for overlay to disappear
+    except TimeoutException:
+        print("Cookie consent button not found or not clickable, continuing...")
+
     data = []
     current_date = None
     last_time = "empty"
 
-    # Get current week range if filtering is enabled
     if week_filter:
         week_start, week_end = get_current_week_range()
         print(f"Filtering for trading week: {week_start.strftime('%d/%m/%Y')} to {week_end.strftime('%d/%m/%Y')}")
 
     try:
-        table = driver.find_element(By.CLASS_NAME, "calendar__table")
-        print("Calendar table found successfully")
+        # CRITICAL CHANGE: Wait for the table to be present right before scraping
+        print("Waiting for calendar table to load...")
+        table = WebDriverWait(driver, TIMEOUT).until(
+            EC.presence_of_element_located((By.CLASS_NAME, "calendar__table"))
+        )
+        print("Calendar table found successfully. Starting scrape.")
         
-        for row in table.find_elements(By.TAG_NAME, "tr"):
-            # Initialize row data with empty values
-            row_data = {
-                'date': 'empty',
-                'time': 'empty', 
-                'currency': 'empty',
-                'impact': 'empty',
-                'event': 'empty',
-                'actual': 'empty',
-                'forecast': 'empty',
-                'previous': 'empty'
-            }
-            
-            cells = row.find_elements(By.CLASS_NAME, "calendar__cell")
+        # Scroll to load all rows
+        driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
+        time.sleep(5)
 
-            # Skip rows that are just day separators
+        for row in table.find_elements(By.TAG_NAME, "tr"):
             if "calendar__row--day-breaker" in row.get_attribute("class"):
                 continue
 
+            row_data = {k: 'empty' for k in ['date', 'time', 'currency', 'impact', 'event', 'actual', 'forecast', 'previous']}
+            cells = row.find_elements(By.CLASS_NAME, "calendar__cell")
             has_time = False
+
             for cell in cells:
                 class_name = cell.get_attribute("class").strip()
                 key = ALLOWED_ELEMENT_TYPES.get(class_name)
 
                 if key:
                     value = clean_cell_text(cell)
-
                     if key == "date" and value and value != "empty":
                         try:
-                            # Parse the date from the calendar
                             parsed_date = datetime.strptime(value + f" {datetime.now().year}", "%a %b %d %Y")
                             current_date = parsed_date.strftime("%d/%m/%Y")
                             value = current_date
                         except ValueError:
                             current_date = "invalid"
-                            value = "invalid"
                     elif key == "time" and value and value != "empty":
-                        # Convert GMT to GMT-5 before storing
                         converted_time = convert_gmt_to_gmt_minus_5(value, current_date)
                         last_time = converted_time
                         has_time = True
                         value = converted_time
-
                     row_data[key] = value
 
-            # If the row has no time cell, use the last one we recorded
             if not has_time:
                 row_data["time"] = last_time
-
-            # Attach current date to row
             row_data["date"] = current_date if current_date else "empty"
 
-            # Filter out rows with only the date
             if any(v != "empty" for k, v in row_data.items() if k != "date"):
-                # Apply week filter if enabled
-                if week_filter and current_date and current_date != "invalid":
-                    if is_date_in_current_week(current_date, week_start, week_end):
-                        data.append(row_data)
-                        print(f"Including data for: {current_date}")
-                elif not week_filter:
+                if not week_filter or (current_date and is_date_in_current_week(current_date, week_start, week_end)):
                     data.append(row_data)
 
-        if week_filter:
-            print(f"Found {len(data)} events for the current trading week")
-        else:
-            print(f"Found {len(data)} events for {month} {year}")
+        print(f"Found {len(data)} events.")
 
+    except TimeoutException:
+        # *** ESSENTIAL DEBUGGING STEP ***
+        print(f"CRITICAL ERROR: Timed out waiting for '.calendar__table' after {TIMEOUT} seconds.")
+        print("The page did not load the expected content. This is likely due to anti-scraping measures.")
+        
+        # Save the page source and a screenshot for manual inspection
+        with open("debug_page_source.html", "w", encoding='utf-8') as f:
+            f.write(driver.page_source)
+        driver.save_screenshot("debug_screenshot.png")
+        
+        print("\n*** Saved 'debug_page_source.html' and 'debug_screenshot.png' for analysis. ***")
+        print("Please check these files to see if there is a CAPTCHA or a block page.")
+        raise
     except Exception as e:
-        print(f"Error scraping data: {str(e)}")
+        print(f"An unexpected error occurred during scraping: {str(e)}")
         raise
 
     return data
@@ -367,38 +264,23 @@ def save_to_csv(events, filename=None, month=None, year=None):
         print("No events to save")
         return
     
-    if not filename:
-        if month and year:
-            filename = f"forex_calendar_{month}_{year}.csv"
-        else:
-            filename = OUTPUT_FILE
-    
+    filename = filename if filename else f"forex_calendar_{month}_{year}.csv" if month and year else OUTPUT_FILE
     print(f"Saving {len(events)} events to {filename}")
     
-    # Define field order
     fieldnames = ['date', 'time', 'currency', 'impact', 'event', 'actual', 'forecast', 'previous']
-    
     with open(filename, 'w', newline='', encoding='utf-8') as csvfile:
         writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
         writer.writeheader()
         writer.writerows(events)
-    
     print(f"Data saved successfully to {filename}")
 
 def get_target_month(arg_month=None, week_mode=False):
     """Get target month and year for scraping"""
     now = datetime.now()
-    
     if week_mode:
-        week_start, week_end = get_current_week_range()
-        target_date = week_start if now.weekday() >= 5 else now.date()
-        month = target_date.strftime("%B")
-        year = target_date.strftime("%Y")
-    else:
-        month = arg_month if arg_month else now.strftime("%B")
-        year = now.strftime("%Y")
-    
-    return month, year
+        target_date = get_current_week_range()[0] if now.weekday() >= 5 else now.date()
+        return target_date.strftime("%B"), target_date.strftime("%Y")
+    return arg_month if arg_month else now.strftime("%B"), now.strftime("%Y")
 
 def main():
     """Main function"""
@@ -410,23 +292,16 @@ def main():
     args = parser.parse_args()
     
     print("=== Forex Factory Economic Calendar Scraper ===")
-    print(f"Environment: {'Streamlit Cloud' if is_streamlit_cloud() else 'Local'}")
     
-    # Determine if we're in week mode
     week_mode = args.week
-    
     month, year = get_target_month(args.month, week_mode)
     
     if week_mode:
-        week_start, week_end = get_current_week_range()
-        print(f"Week mode: Targeting trading week {week_start} to {week_end}")
+        print(f"Week mode enabled: Targeting current/upcoming trading week.")
     
     driver = None
     try:
-        # Initialize driver
         driver = init_driver()
-        
-        # Scrape data with retries
         events = None
         for attempt in range(RETRY_ATTEMPTS):
             try:
@@ -439,39 +314,24 @@ def main():
                     print(f"Retrying in {RETRY_DELAY} seconds...")
                     time.sleep(RETRY_DELAY)
                 else:
-                    raise
+                    raise Exception("All retry attempts failed.")
         
         if events:
-            # Save to CSV
             save_to_csv(events, args.output, month, year)
-            print(f"\n=== Scraping completed successfully ===")
-            print(f"Total events: {len(events)}")
-            
-            # Show sample of events
-            if len(events) > 0:
-                print("\nSample events:")
-                for event in events[:5]:
-                    print(f"  {event['date']} {event['time']} {event['currency']} - {event['event']} ({event['impact']})")
-                if len(events) > 5:
-                    print(f"  ... and {len(events) - 5} more events")
+            print("\n=== Scraping completed successfully ===")
         else:
-            print("No events were scraped")
+            print("\n--- No events were scraped. ---")
             
     except KeyboardInterrupt:
-        print("\nScraping interrupted by user")
+        print("\nScraping interrupted by user.")
         sys.exit(1)
-        
     except Exception as e:
-        print(f"\nError during scraping: {str(e)}")
+        print(f"\nAn unrecoverable error occurred: {str(e)}")
         sys.exit(1)
-        
     finally:
         if driver:
-            try:
-                driver.quit()
-                print("WebDriver closed successfully")
-            except Exception as e:
-                print(f"Error closing WebDriver: {str(e)}")
+            driver.quit()
+            print("WebDriver closed successfully.")
 
 if __name__ == "__main__":
     main()
