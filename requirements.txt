@@ -5,3 +5,4 @@ pytz
 webdriver-manager
 requests
 beautifulsoup4
+playwright
