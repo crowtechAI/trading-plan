@@ -30,7 +30,7 @@ def is_streamlit_cloud():
     return (
         os.getenv('STREAMLIT_SHARING_MODE') == 'true' or
         'streamlit' in str(os.getcwd()).lower() or
-        os.path.exists('/usr/bin/chromium-browser') or
+        os.path.exists('/usr/bin/chromium') or  # Updated path
         'STREAMLIT' in os.environ or
         any('streamlit' in str(arg).lower() for arg in sys.argv) or
         os.path.exists('/mount/src')  # Common Streamlit Cloud path
@@ -66,8 +66,8 @@ def init_driver():
     try:
         if is_streamlit_cloud():
             print("Detected Streamlit Cloud environment")
-            # Use system chromium on Streamlit Cloud
-            options.binary_location = '/usr/bin/chromium-browser'
+            # Use system chromium on Streamlit Cloud (Debian paths)
+            options.binary_location = '/usr/bin/chromium'
             service = Service('/usr/bin/chromedriver')
         else:
             print("Detected local environment")
@@ -94,7 +94,7 @@ def init_driver():
             options.add_argument('--disable-dev-shm-usage')
             
             if is_streamlit_cloud():
-                options.binary_location = '/usr/bin/chromium-browser'
+                options.binary_location = '/usr/bin/chromium'
                 service = Service('/usr/bin/chromedriver')
             else:
                 service = Service()
