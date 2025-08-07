@@ -26,7 +26,7 @@ except KeyError:
     st.error("MongoDB connection string not found. Please add it to your .streamlit/secrets.toml file.")
     st.stop() # Stop the app if the secret is not found
 
-DB_NAME = "trading_plans"
+DB_NAME = "DailyTradingPlanner"
 COLLECTION_NAME = "economic_events"
 
 # --- CONSTANTS ---
