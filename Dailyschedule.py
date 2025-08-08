@@ -133,14 +133,32 @@ def update_mongo_with_scraped_data():
         return 0, 0
 
 def parse_time(time_str):
+    """Enhanced time parsing to handle your data format"""
     if not isinstance(time_str, str) or not time_str.strip():
         return None
+    
     clean_time_str = time_str.strip()
-    for fmt in ('%I:%M%p', '%I:%M %p', '%H:%M'):
+    
+    # Handle formats like "7:01pm", "12:30am", "15:30", etc.
+    time_formats = [
+        '%I:%M%p',    # 7:01pm
+        '%I:%M %p',   # 7:01 pm
+        '%H:%M',      # 15:30
+        '%I%p',       # 7pm
+        '%I %p'       # 7 pm
+    ]
+    
+    for fmt in time_formats:
         try: 
-            return datetime.strptime(clean_time_str, fmt).time()
+            parsed_time = datetime.strptime(clean_time_str, fmt).time()
+            # Debug: uncomment to see time parsing
+            # st.write(f"DEBUG TIME: '{clean_time_str}' parsed with '{fmt}' → {parsed_time}")
+            return parsed_time
         except ValueError: 
             continue
+    
+    # If no format worked
+    # st.write(f"DEBUG TIME: Could not parse time '{clean_time_str}'")
     return None
 
 def parse_date(date_str):
@@ -154,24 +172,24 @@ def parse_date(date_str):
     if not date_str:
         return None
     
-    # Try multiple date formats
+    # Try multiple date formats - DD/MM/YYYY first (your data appears to be in this format)
     date_formats = [
-        '%d/%m/%Y',  # 08/08/2025
-        '%m/%d/%Y',  # 08/08/2025 (US format)
-        '%Y-%m-%d',  # 2025-08-08
-        '%d-%m-%Y',  # 08-08-2025
-        '%Y/%m/%d',  # 2025/08/08
-        '%d.%m.%Y',  # 08.08.2025
-        '%Y%m%d',    # 20250808
-        '%d %m %Y',  # 08 08 2025
-        '%d/%m/%y',  # 08/08/25
-        '%m/%d/%y'   # 08/08/25 (US format)
+        '%d/%m/%Y',  # 01/07/2025 = July 1st, 2025 (DD/MM/YYYY - likely correct for your data)
+        '%m/%d/%Y',  # 01/07/2025 = January 7th, 2025 (MM/DD/YYYY - US format)
+        '%Y-%m-%d',  # 2025-07-01
+        '%d-%m-%Y',  # 01-07-2025
+        '%Y/%m/%d',  # 2025/07/01
+        '%d.%m.%Y',  # 01.07.2025
+        '%Y%m%d',    # 20250701
+        '%d %m %Y',  # 01 07 2025
+        '%d/%m/%y',  # 01/07/25
+        '%m/%d/%y'   # 01/07/25 (US format)
     ]
     
     for fmt in date_formats:
         try: 
             parsed = datetime.strptime(date_str, fmt).date()
-            # Debug: uncomment this line to see what format worked
+            # Enable this debug line temporarily if you want to see what format is working
             # st.write(f"DEBUG: '{date_str}' parsed with format '{fmt}' → {parsed}")
             return parsed
         except (ValueError, TypeError): 
