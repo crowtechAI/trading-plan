@@ -63,32 +63,67 @@ def get_mongo_collection():
         return None
 
 def debug_database_contents():
-    """Debug function to inspect database contents"""
+    """Debug function to inspect database contents using Atlas Search"""
     collection = get_mongo_collection()
     if collection is None:
         return None, "No database connection"
     
     try:
-        # Count total documents
-        total_count = collection.count_documents({})
+        # Method 1: Try basic find() first
+        try:
+            total_count_basic = collection.count_documents({})
+            sample_docs_basic = list(collection.find().limit(5))
+            method_used = "Basic MongoDB queries"
+        except Exception as basic_error:
+            total_count_basic = 0
+            sample_docs_basic = []
+            st.warning(f"Basic queries failed: {basic_error}")
         
-        # Get a few sample documents
-        sample_docs = list(collection.find().limit(5))
+        # Method 2: Try Atlas Search
+        try:
+            # Use Atlas Search to get all documents
+            search_pipeline = [
+                {
+                    "$search": {
+                        "index": "default",
+                        "wildcard": {
+                            "query": "*",
+                            "path": "*"
+                        }
+                    }
+                }
+            ]
+            
+            sample_docs_search = list(collection.aggregate(search_pipeline).limit(10))
+            total_count_search = len(sample_docs_search)
+            
+            if sample_docs_search:
+                method_used = "Atlas Search"
+                total_count_basic = total_count_search
+                sample_docs_basic = sample_docs_search
+                
+        except Exception as search_error:
+            st.warning(f"Atlas Search failed: {search_error}")
         
-        # Get unique dates in the collection
-        pipeline = [
-            {"$group": {"_id": "$date", "count": {"$sum": 1}}},
-            {"$sort": {"_id": 1}}
-        ]
-        unique_dates = list(collection.aggregate(pipeline))
+        # Get unique dates using aggregation
+        try:
+            pipeline = [
+                {"$group": {"_id": "$date", "count": {"$sum": 1}}},
+                {"$sort": {"_id": 1}}
+            ]
+            unique_dates = list(collection.aggregate(pipeline))
+        except Exception as agg_error:
+            st.warning(f"Date aggregation failed: {agg_error}")
+            unique_dates = []
         
         debug_info = {
-            "total_count": total_count,
-            "sample_docs": sample_docs,
-            "unique_dates": unique_dates
+            "total_count": total_count_basic,
+            "sample_docs": sample_docs_basic,
+            "unique_dates": unique_dates,
+            "method_used": method_used
         }
         
-        return debug_info, "Success"
+        return debug_info, f"Success using {method_used}"
         
     except Exception as e:
         return None, f"Error querying database: {e}"
@@ -286,12 +321,15 @@ def main():
         if debug_info:
             st.success(f"✅ Database Status: {status}")
             
-            col1, col2 = st.columns(2)
+            col1, col2, col3 = st.columns(3)
             with col1:
                 st.metric("Total Records", debug_info["total_count"])
             
             with col2:
                 st.metric("Unique Dates", len(debug_info["unique_dates"]))
+                
+            with col3:
+                st.metric("Query Method", debug_info.get("method_used", "Unknown"))
             
             if debug_info["sample_docs"]:
                 st.write("**Sample Documents:**")
@@ -349,12 +387,50 @@ def main():
         st.warning("Awaiting database connection...")
         return
 
-    # Get all records with enhanced debugging
-    records = list(collection.find({}))
-    st.write(f"📊 **Total records found:** {len(records)}")
+    # Get all records with enhanced debugging - try both methods
+    try:
+        # Method 1: Try basic MongoDB find
+        records = list(collection.find({}))
+        query_method = "Basic MongoDB find()"
+        
+        # If basic find returns no results, try Atlas Search
+        if not records:
+            st.warning("Basic find() returned no results. Trying Atlas Search...")
+            
+            try:
+                # Use Atlas Search to get all documents
+                search_pipeline = [
+                    {
+                        "$search": {
+                            "index": "default",
+                            "wildcard": {
+                                "query": "*",
+                                "path": "*"
+                            }
+                        }
+                    },
+                    {
+                        "$limit": 1000  # Limit to prevent too many results
+                    }
+                ]
+                
+                records = list(collection.aggregate(search_pipeline))
+                query_method = "Atlas Search"
+                st.success(f"✅ Successfully retrieved {len(records)} records using Atlas Search")
+                
+            except Exception as search_error:
+                st.error(f"Atlas Search also failed: {search_error}")
+                records = []
+                
+    except Exception as basic_error:
+        st.error(f"Basic MongoDB query failed: {basic_error}")
+        records = []
+        query_method = "Failed"
+    
+    st.write(f"📊 **Total records found:** {len(records)} (using {query_method})")
     
     if not records:
-        st.info("👋 Database is empty. Click **Fetch Live Data** to populate it.")
+        st.info("👋 Database appears empty or inaccessible. Click **Fetch Live Data** to populate it.")
         return
 
     # Enhanced debug function to show exactly what's happening
