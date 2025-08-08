@@ -150,21 +150,35 @@ def parse_date(date_str):
     
     date_str = date_str.strip()
     
+    # If empty string, return None
+    if not date_str:
+        return None
+    
     # Try multiple date formats
     date_formats = [
         '%d/%m/%Y',  # 08/08/2025
-        '%m/%d/%Y',  # 08/08/2025
+        '%m/%d/%Y',  # 08/08/2025 (US format)
         '%Y-%m-%d',  # 2025-08-08
         '%d-%m-%Y',  # 08-08-2025
-        '%Y/%m/%d'   # 2025/08/08
+        '%Y/%m/%d',  # 2025/08/08
+        '%d.%m.%Y',  # 08.08.2025
+        '%Y%m%d',    # 20250808
+        '%d %m %Y',  # 08 08 2025
+        '%d/%m/%y',  # 08/08/25
+        '%m/%d/%y'   # 08/08/25 (US format)
     ]
     
     for fmt in date_formats:
         try: 
-            return datetime.strptime(date_str, fmt).date()
+            parsed = datetime.strptime(date_str, fmt).date()
+            # Debug: uncomment this line to see what format worked
+            # st.write(f"DEBUG: '{date_str}' parsed with format '{fmt}' → {parsed}")
+            return parsed
         except (ValueError, TypeError): 
             continue
     
+    # If no format worked, show debug info
+    # st.write(f"DEBUG: Could not parse date '{date_str}' with any known format")
     return None
 
 def parse_impact(impact_str):
@@ -325,33 +339,68 @@ def main():
         st.info("👋 Database is empty. Click **Fetch Live Data** to populate it.")
         return
 
-    # Debug: Show what dates we're looking for vs what we have
+    # Enhanced debug function to show exactly what's happening
     def get_events_for(target_date):
         matching_events = []
         target_date_str = target_date.strftime('%d/%m/%Y')
         
         st.write(f"🎯 **Looking for events on:** {target_date} (formatted as {target_date_str})")
         
-        for row in records:
+        # Debug: Show detailed matching process
+        debug_matches = []
+        debug_non_matches = []
+        
+        for i, row in enumerate(records):
             row_date_str = row.get('date', '')
             parsed_date = parse_date(row_date_str)
             
+            debug_info = {
+                'index': i,
+                'raw_date': row_date_str,
+                'parsed_date': parsed_date,
+                'target_date': target_date,
+                'matches': parsed_date == target_date,
+                'event_name': row.get('event', 'N/A')[:50],  # Truncate long names
+                'currency': row.get('currency', 'N/A'),
+                'time': row.get('time', 'N/A')
+            }
+            
             if parsed_date == target_date:
                 matching_events.append(row)
+                debug_matches.append(debug_info)
+            else:
+                debug_non_matches.append(debug_info)
         
         st.write(f"✅ **Found {len(matching_events)} events for {target_date}**")
         
-        # Show a few examples of what dates are in the database
-        if len(records) > 0:
-            st.write("**Sample dates in database:**")
-            sample_dates = set()
-            for row in records[:10]:  # Show first 10 dates
-                date_str = row.get('date', '')
-                parsed = parse_date(date_str)
-                sample_dates.add(f"{date_str} → {parsed}")
-            
-            for sample in list(sample_dates)[:5]:
-                st.write(f"- {sample}")
+        # Show detailed matching results
+        if debug_matches:
+            st.write("**✅ MATCHING Events:**")
+            for match in debug_matches:
+                st.write(f"- Row {match['index']}: '{match['raw_date']}' → {match['parsed_date']} | {match['event_name']} ({match['currency']} at {match['time']})")
+        
+        # Show some non-matching examples for comparison
+        if debug_non_matches and len(debug_non_matches) > 0:
+            st.write("**❌ NON-MATCHING Examples (first 5):**")
+            for non_match in debug_non_matches[:5]:
+                st.write(f"- Row {non_match['index']}: '{non_match['raw_date']}' → {non_match['parsed_date']} | {non_match['event_name']}")
+        
+        # Show all unique dates in the database
+        all_dates = set()
+        for row in records:
+            date_str = row.get('date', '')
+            parsed = parse_date(date_str)
+            if parsed:
+                all_dates.add(parsed)
+        
+        st.write(f"**📅 All unique dates in database ({len(all_dates)} total):**")
+        sorted_dates = sorted(all_dates)
+        for date_obj in sorted_dates[:10]:  # Show first 10 dates
+            is_target = "← TARGET" if date_obj == target_date else ""
+            st.write(f"- {date_obj} {is_target}")
+        
+        if len(sorted_dates) > 10:
+            st.write(f"... and {len(sorted_dates) - 10} more dates")
         
         return matching_events
 
@@ -361,15 +410,37 @@ def main():
         
         if not events_today: 
             plan, reason, morning, afternoon, allday = "Standard Day Plan", "No economic events found.", [], [], []
+            st.warning(f"⚠️ No events found for {selected_date}. This might be due to:")
+            st.write("1. **Date format mismatch** - Check if CSV dates match expected format")
+            st.write("2. **No data for this date** - The date might not exist in your dataset")
+            st.write("3. **Database sync issues** - Try fetching fresh data")
         else: 
+            st.success(f"✅ Found {len(events_today)} events for analysis")
             plan, reason, morning, afternoon, allday = analyze_day_events(selected_date, events_today)
             
-            # Show the events we found
-            st.write("**Events found for analysis:**")
-            for event in events_today:
-                st.write(f"- {event.get('event', 'N/A')} at {event.get('time', 'N/A')} ({event.get('currency', 'N/A')})")
+            # Show the raw events we found
+            with st.expander(f"📋 Raw Events Data ({len(events_today)} events)"):
+                for i, event in enumerate(events_today):
+                    st.write(f"**Event {i+1}:**")
+                    st.json(event)
+            
+            # Show the processed events
+            st.write("**📊 Processed Events for Analysis:**")
+            all_processed = morning + afternoon + allday
+            if all_processed:
+                for event in all_processed:
+                    st.write(f"- **{event['time']}** {event['name']} ({event['currency']}) - Impact: {event['impact']}")
+            else:
+                st.write("No events after processing (this might indicate parsing issues)")
         
-        st.markdown(f"**Plan:** {plan} - *{reason}*")
+        st.markdown(f"**Plan:** {plan}")
+        st.markdown(f"**Reason:** {reason}")
+        
+        # Show detailed analysis results
+        st.write("**📈 Analysis Results:**")
+        st.write(f"- Morning Events ({len(morning)}): {[e['name'] for e in morning]}")
+        st.write(f"- Afternoon Events ({len(afternoon)}): {[e['name'] for e in afternoon]}")
+        st.write(f"- All Day Events ({len(allday)}): {[e['name'] for e in allday]}")
         
         # Display plan card
         if "No Trade" in plan:
