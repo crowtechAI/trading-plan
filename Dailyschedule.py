@@ -54,10 +54,10 @@ st.markdown("""
     .checklist-item {
         background: rgba(255, 255, 255, 0.05);
         border: 1px solid rgba(255, 255, 255, 0.1);
-        padding: 0.75rem;
-        margin: 0.5rem 0;
-        border-left: 4px solid #00d4ff;
-        border-radius: 6px;
+        padding: 1rem 1.25rem;
+        margin: 0.75rem 0;
+        border-left: 5px solid #00d4ff;
+        border-radius: 8px;
         color: #e0e0e0;
         backdrop-filter: blur(10px);
     }
@@ -213,7 +213,7 @@ def parse_impact(impact_str):
 # --- ANALYSIS LOGIC ---
 def analyze_day_events(target_date, events):
     plan = "Standard Day Plan"
-    reason = "No high-impact USD news found. Proceed with directional bias. - Check Seasonality Alignment"
+    reason = "No high-impact USD news found. Proceed with the Standard Day Plan and your directional bias."
     has_high_impact_usd_event = False
     morning_events, afternoon_events, all_day_events = [], [], []
 
@@ -239,14 +239,14 @@ def analyze_day_events(target_date, events):
         if currency == 'USD':
             if any(keyword.lower() in event_name.lower() for keyword in NO_TRADE_KEYWORDS):
                 if event_time and event_time >= AFTERNOON_NO_TRADE_START:
-                    return "No Trade Day", f"Critical afternoon USD event '{event_name}' at {event_time.strftime('%I:%M %p')}.", morning_events, afternoon_events, all_day_events
+                    return "No Trade Day", f"Critical afternoon USD event '{event_name}' at {event_time.strftime('%I:%M %p')}. Capital preservation is the priority.", morning_events, afternoon_events, all_day_events
             
             if is_high_impact and event_time:
                 has_high_impact_usd_event = True
 
     if has_high_impact_usd_event:
         plan = "News Day Plan"
-        reason = "High-impact USD news detected. Abandon directional bias and switch to a non-bias scalping model."
+        reason = "High-impact USD news detected. The News Day Plan is active. Be patient and wait for the news-driven liquidity sweep."
         
     return plan, reason, morning_events, afternoon_events, all_day_events
 
@@ -284,23 +284,103 @@ def display_plan_card(plan, reason):
 def display_action_checklist(plan):
     with st.expander("📝 Action Checklist", expanded=True):
         if plan == "News Day Plan":
-            checklist = ["🚫 DO NOT trade the morning session", "📊 Mark NY Lunch Range (12:00 PM - 1:30 PM)", "👀 Wait for liquidity raid after 1:30 PM", "🎯 Prime entry window: 2:00 PM - 3:00 PM", "✅ Look for displacement/FVG confirmation"]
+            checklist = ["🚫 DO NOT trade the morning session", "📊 Mark NY Lunch Range (12:00 PM - 1:30 PM)", "👀 Wait for liquidity raid after the news release", "🎯 Prime entry window: 2:00 PM - 3:00 PM", "✅ Look for MSS + FVG confirmation"]
         elif plan == "Standard Day Plan":
-            checklist = ["📈 Ready for morning open at 9:30 AM", "📊 Mark Previous Day PM Range (1:30 PM - 4:00 PM)", "🌍 Mark London Session (2:00 AM - 5:00 AM)", "👀 Wait for Judas Swing at open", "✅ Enter after sweep with displacement/FVG"]
+            checklist = ["📈 Mark Previous Day PM Range (1:30 PM - 4:00 PM)", "🌍 Mark London Session Range (2:00 AM - 5:00 AM)", "👀 Watch for NY Open Judas Swing (9:30 AM - 10:30 AM)", "🎯 Prime entry window: 10:00 AM - 11:00 AM", "✅ Enter after sweep with MSS + FVG"]
         else:
-            checklist = ["🚫 Stand aside completely", "💰 Preserve capital", "📚 Use time for analysis", "🧘 Practice mindfulness or journaling"]
+            checklist = ["🚫 Stand aside completely", "💰 Preserve capital", "📚 Use time for journaling and review", "🧘 Prepare for the next trading day"]
         for item in checklist:
-            st.markdown(f'<div class="checklist-item">{item}</div>', unsafe_allow_html=True)
+            st.markdown(f'<div class="checklist-item" style="border-left-color: #00d4ff;">{item}</div>', unsafe_allow_html=True)
 
 def display_perfect_trade_idea(plan):
-    st.markdown("## 🎯 Perfect Trade Idea")
+    st.markdown("## 🎯 The A+ Trade Setup")
+
     if plan == "Standard Day Plan":
-        idea = """**Time Window:** 10:00 AM – 11:00 AM ET\n• Identify a Judas Swing early in the NY session\n• Wait for liquidity sweep of the AM range high or low\n• Look for displacement + FVG in the opposite direction\n• Ideal target: 1-hour imbalance or PD array (e.g., PDH/PDL/IPDA levels)"""
-    elif plan == "News Day Plan":
-        idea = """**Time Window:** 2:00 PM – 3:00 PM ET\n• Observe reaction post high-impact news release\n• Wait for stop run/liquidity raid into PD arrays\n• Look for SMT divergence and clean displacement\n• Ideal setup: News reversal or continuation with clean risk parameters"""
-    else:
-        idea = "📴 No trade ideas today. Preserve capital and prepare for future opportunities."
-    st.markdown(f'<div class="checklist-item">{idea}</div>', unsafe_allow_html=True)
+        st.markdown("""
+        <div class="checklist-item" style="border-left: 5px solid #4caf50;">
+            <h4 style="margin-top:0; color: #81c784;">Profile A: Standard Day Plan (Reversal/Continuation)</h4>
+            <ol>
+                <li><strong>Phase I (Pre-Market):</strong> Confirm HTF Bias. Mark the <strong>Previous Day's PM High/Low</strong> and the <strong>London Session High/Low</strong> as your key liquidity levels.</li>
+                <li><strong>Phase II (The Tactic):</strong> Focus on the <strong>NY AM Silver Bullet (10-11 AM)</strong>. Your goal is to enter on a continuation of the trend established in London.</li>
+                <li><strong>Phase III (The Setup):</strong>
+                    <ul>
+                        <li>Wait for the 9:30 AM open to create a small pullback that **sweeps a short-term low** (for longs) or high (for shorts).</li>
+                        <li>This sweep must respect the major London session high/low.</li>
+                    </ul>
+                </li>
+                <li><strong>Phase IV (The Entry):</strong>
+                    <ul>
+                        <li>After the sweep, wait for a lower timeframe (1m/5m) **Market Structure Shift (MSS)** with displacement.</li>
+                        <li>Enter on a retracement into the **Fair Value Gap (FVG)** created during the MSS.</li>
+                        <li><strong>Stop Loss:</strong> Place below the low (or above the high) that was created by the liquidity sweep.</li>
+                    </ul>
+                </li>
+                 <li><strong>Phase V (The Target):</strong> Your primary target is the opposing OS4L liquidity level (e.g., the London High or the Previous Day's PM High).</li>
+            </ol>
+        </div>
+        """, unsafe_allow_html=True)
+
+    if plan == "News Day Plan":
+        st.markdown("""
+        <div class="checklist-item" style="border-left: 5px solid #ff9800;">
+            <h4 style="margin-top:0; color: #ffb74d;">Profile C: High-Impact News Day Plan (Volatility)</h4>
+            <ol>
+                <li><strong>Phase I (Pre-News):</strong> Stand aside. Your only task is to mark the **NY Lunch Range High/Low (12:00 PM - 1:30 PM)</strong>. This is the target liquidity.</li>
+                <li><strong>Phase II (The Tactic):</strong> Your focus is exclusively on the **NY PM Silver Bullet (2:00 PM - 3:00 PM)** window, immediately following the news release.</li>
+                <li><strong>Phase III (The Setup):</strong>
+                    <ul>
+                        <li>Wait for the news release to cause a violent spike that **sweeps the liquidity** above the lunch high or below the lunch low.</li>
+                    </ul>
+                </li>
+                <li><strong>Phase IV (The Entry):</strong>
+                    <ul>
+                        <li>After the sweep, wait for a clear **Market Structure Shift (MSS)** with displacement as price reverses.</li>
+                        <li>Enter on a retracement into the **Fair Value Gap (FVG)** created by that reversal.</li>
+                        <li><strong>Stop Loss:</strong> Place just beyond the peak of the volatility spike (the news-driven high or low).</li>
+                    </ul>
+                </li>
+                 <li><strong>Phase V (The Target):</strong> Your primary target is a significant structural level on the opposite side of the range or a major HTF liquidity pool.</li>
+            </ol>
+        </div>
+        """, unsafe_allow_html=True)
+    
+    st.markdown("""
+    <div class="checklist-item" style="border-left: 5px solid #64b5f6;">
+        <h4 style="margin-top:0; color: #64b5f6;">Profile B: Trending Day Plan (Continuation)</h4>
+        <p style="font-size:0.9rem; margin-top:-10px; color: #b0b0b0;">(This profile is identified manually when price shows extreme one-sided momentum from the open, breaking key levels without hesitation.)</p>
+        <ol>
+            <li><strong>Phase I (Identify):</strong> Recognize that price is not creating complex manipulations. It is moving efficiently in one direction. **Abandon the deep discount/reversal model.**</li>
+            <li><strong>Phase II (The Tactic):</strong> Stalk shallow pullbacks. Your focus is on joining the established momentum.</li>
+            <li><strong>Phase III (The Setup):</strong>
+                <ul>
+                    <li>Wait for price to make an impulsive move, then form a brief, tight **consolidation (a "flag").**</li>
+                    <li>The setup condition is the **aggressive breakout** from this consolidation.</li>
+                </ul>
+            </li>
+            <li><strong>Phase IV (The Entry):</strong>
+                <ul>
+                    <li>As price expands from the consolidation, it will leave a new, small **Fair Value Gap (FVG).**</li>
+                    <li>Enter on the first shallow pullback into this immediate FVG.</li>
+                    <li><strong>Stop Loss:</strong> Place just below the low of the small consolidation range.</li>
+                </ul>
+            </li>
+             <li><strong>Phase V (The Target):</strong> Targets are often based on measured legs of expansion or distant HTF liquidity levels.</li>
+        </ol>
+    </div>
+    """, unsafe_allow_html=True)
+
+    if plan == "No Trade Day":
+        st.markdown("""
+        <div class="checklist-item" style="border-left: 5px solid #f44336;">
+            <h4 style="margin-top:0; color: #ff6b6b;">📴 No Trade Day</h4>
+            <p>Today's risk environment is not conducive to high-probability trading due to Tier-1 afternoon events. The primary objective is capital preservation.</p>
+            <ul>
+                <li><strong>Observe:</strong> Watch the market's reaction to news for educational purposes.</li>
+                <li><strong>Analyze:</strong> Use the time for backtesting or reviewing past trades.</li>
+                <li><strong>Prepare:</strong> Plan your strategy for the next trading day.</li>
+            </ul>
+        </div>
+        """, unsafe_allow_html=True)
 
 def display_timeline_events(events, title):
     if not events: return
@@ -402,10 +482,12 @@ def main():
     if view_option == "Today":
         events = get_events_for(selected_date)
         if not events:
-            st.warning(f"No economic events found in the database for {selected_date.strftime('%A, %B %d, %Y')}.")
-            return
-            
-        plan, reason, morning, afternoon, allday = analyze_day_events(selected_date, events)
+            # Provide a default "Standard Day" plan if no events are found for the day
+            plan, reason = "Standard Day Plan", "No economic events found. Proceed with Standard Day Plan."
+            morning, afternoon, allday = [], [], []
+        else:
+            plan, reason, morning, afternoon, allday = analyze_day_events(selected_date, events)
+
         display_plan_card(plan, reason)
 
         # Display TGIF alert on Fridays
@@ -414,10 +496,12 @@ def main():
 
         display_action_checklist(plan)
         display_perfect_trade_idea(plan)
+        
+        st.markdown("---")
         st.markdown("## 🕒 Today's Event Timeline")
         c1, c2 = st.columns(2)
-        with c1: display_timeline_events(morning, "🌅 Morning Events")
-        with c2: display_timeline_events(afternoon, "🌇 Afternoon Events")
+        with c1: display_timeline_events(morning, "🌅 Morning Events (Before 12 PM ET)")
+        with c2: display_timeline_events(afternoon, "🌇 Afternoon Events (After 12 PM ET)")
         if allday: display_timeline_events(allday, "📅 All-Day Events")
     else:
         st.markdown("## 🗓 Weekly Outlook")
@@ -429,14 +513,15 @@ def main():
             # Use an expander for each day in the weekly view for better organization
             with st.expander(f"**{d.strftime('%A, %b %d')}**", expanded=(d == selected_date)):
                 if not events_for_day:
-                    st.info("No significant events scheduled.")
+                    plan, reason = "Standard Day Plan", "No economic events found. Proceed with Standard Day Plan."
                 else:
                     plan, reason, *_ = analyze_day_events(d, events_for_day)
-                    # Display a more compact card for the weekly view
-                    if plan == "No Trade Day": card_class, icon = "no-trade", "🚫"
-                    elif plan == "News Day Plan": card_class, icon = "news-day", "📰"
-                    else: card_class, icon = "standard-day", "✅"
-                    st.markdown(f'<div class="main-plan-card {card_class}" style="margin: 0.5rem 0; padding: 1rem;"><h3 style="margin:0;">{icon} {plan}</h3><p style="margin-bottom:0;">{reason}</p></div>', unsafe_allow_html=True)
+                
+                # Display a more compact card for the weekly view
+                if plan == "No Trade Day": card_class, icon = "no-trade", "🚫"
+                elif plan == "News Day Plan": card_class, icon = "news-day", "📰"
+                else: card_class, icon = "standard-day", "✅"
+                st.markdown(f'<div class="main-plan-card {card_class}" style="margin: 0.5rem 0; padding: 1rem;"><h3 style="margin:0;">{icon} {plan}</h3><p style="margin-bottom:0;">{reason}</p></div>', unsafe_allow_html=True)
 
 
 if __name__ == "__main__":
