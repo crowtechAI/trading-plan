@@ -23,7 +23,7 @@ except KeyError:
     st.error("MongoDB connection string not found in Streamlit Secrets. Please add it to your .streamlit/secrets.toml file.")
     st.stop()
 
-DB_NAME = "trading_plans"
+DB_NAME = "DailyTradingPlanner"
 COLLECTION_NAME = "economic_events"
 
 # --- CONSTANTS ---
