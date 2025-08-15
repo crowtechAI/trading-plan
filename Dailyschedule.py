@@ -95,6 +95,28 @@ st.markdown("""
     }
     .metric-card .metric-label { color: #b0b0b0; font-size: 0.9rem; }
     .metric-card .metric-value { color: #ffffff; font-size: 1.2rem; font-weight: bold; }
+    
+    /* --- NEW STYLES FOR RISK MODULE --- */
+    .risk-container {
+        padding: 1.5rem;
+        border-radius: 12px;
+        border: 1px solid #4A5568;
+        background: #2D3748;
+        margin-bottom: 2rem;
+    }
+    .risk-output {
+        padding: 1rem;
+        border-radius: 8px;
+        text-align: center;
+        color: white;
+        font-weight: bold;
+        font-size: 1.1rem;
+    }
+    .risk-normal { background: #3182CE; } /* Blue */
+    .risk-defensive { background: #DD6B20; } /* Orange */
+    .risk-minimum { background: #E53E3E; } /* Red */
+    .risk-passed { background: #38A169; } /* Green */
+
 </style>
 """, unsafe_allow_html=True)
 
@@ -103,7 +125,7 @@ MORNING_CUTOFF = time(12, 0)
 AFTERNOON_NO_TRADE_START = time(13, 55)
 NO_TRADE_KEYWORDS = ['FOMC Statement', 'FOMC Press Conference', 'Interest Rate Decision', 'Monetary Policy Report']
 FORCED_HIGH_IMPACT_KEYWORDS = ['Powell Speaks', 'Fed Chair', 'Non-Farm', 'NFP', 'CPI', 'Consumer Price Index', 'PPI', 'Producer Price Index', 'GDP']
-
+WIN_STREAK_THRESHOLD = 5 # Rule: After 5 wins, reduce risk.
 
 # --- DATABASE LOGIC ---
 
@@ -123,18 +145,13 @@ def init_connection():
 def get_events_from_db():
     client = init_connection()
     if client is None:
-        return pd.DataFrame() # Return empty dataframe if connection fails
-        
+        return pd.DataFrame()
     db = client[DB_NAME]
     collection = db[COLLECTION_NAME]
-    
-    # Fetch all documents, excluding the default '_id' field
     items = list(collection.find({}, {'_id': 0}))
-    
     if not items:
         st.info("Database is currently empty. Please fetch live economic data.")
         return pd.DataFrame()
-        
     return pd.DataFrame(items)
 
 # Update the database with data from the CSV file
@@ -142,41 +159,29 @@ def update_db_from_csv(file_path):
     client = init_connection()
     if client is None:
         return 0, 0
-        
     db = client[DB_NAME]
     collection = db[COLLECTION_NAME]
-    
     try:
         df = pd.read_csv(file_path)
-        # Convert DataFrame to a list of dictionaries for MongoDB insertion
         events = df.to_dict('records')
     except FileNotFoundError:
         st.error(f"Scraped data file not found at: {file_path}")
         return 0, 0
-
     upserted_count = 0
     modified_count = 0
-    
-    # Iterate over each event and update or insert it
     for event in events:
-        # Create a unique filter for each event based on its core properties
         query = {
             'date': event.get('date'),
             'time': event.get('time'),
             'event': event.get('event'),
             'currency': event.get('currency')
         }
-        
-        # Use update_one with upsert=True to either insert a new document or update an existing one
         result = collection.update_one(query, {"$set": event}, upsert=True)
-        
         if result.upserted_id:
             upserted_count += 1
         elif result.modified_count > 0:
             modified_count += 1
-            
     return upserted_count, modified_count
-
 
 # --- UTILITIES ---
 def get_current_market_time():
@@ -216,54 +221,118 @@ def analyze_day_events(target_date, events):
     reason = "No high-impact USD news found. Proceed with the Standard Day Plan and your directional bias."
     has_high_impact_usd_event = False
     morning_events, afternoon_events, all_day_events = [], [], []
-
     for event in events:
         event_time = parse_time(event.get('time', ''))
         event_name = event.get('event', '')
         currency = event.get('currency', '').strip().upper()
         parsed_impact = parse_impact(event.get('impact', ''))
-        
         is_forced_high = any(keyword.lower() in event_name.lower() for keyword in FORCED_HIGH_IMPACT_KEYWORDS)
         is_high_impact = (parsed_impact == 'High') or is_forced_high
-        
         display_impact = "High (Forced)" if is_forced_high and parsed_impact != 'High' else ("High" if is_high_impact else parsed_impact)
         event_details = {'name': event_name, 'currency': currency, 'impact': display_impact, 'time': event_time.strftime('%I:%M %p') if event_time else 'All Day', 'raw_time': event_time}
-
         if event_time is None:
             all_day_events.append(event_details)
         elif event_time < MORNING_CUTOFF:
             morning_events.append(event_details)
         else:
             afternoon_events.append(event_details)
-
         if currency == 'USD':
             if any(keyword.lower() in event_name.lower() for keyword in NO_TRADE_KEYWORDS):
                 if event_time and event_time >= AFTERNOON_NO_TRADE_START:
                     return "No Trade Day", f"Critical afternoon USD event '{event_name}' at {event_time.strftime('%I:%M %p')}. Capital preservation is the priority.", morning_events, afternoon_events, all_day_events
-            
             if is_high_impact and event_time:
                 has_high_impact_usd_event = True
-
     if has_high_impact_usd_event:
         plan = "News Day Plan"
         reason = "High-impact USD news detected. The News Day Plan is active. Be patient and wait for the news-driven liquidity sweep."
-        
     return plan, reason, morning_events, afternoon_events, all_day_events
 
 # --- UI COMPONENTS ---
 
+# ***************************************************************
+# --- NEW: DYNAMIC RISK MANAGEMENT MODULE ---
+# ***************************************************************
+def display_risk_management_module():
+    st.markdown("## 🧠 Dynamic Risk Management")
+    
+    with st.container():
+        st.markdown('<div class="risk-container">', unsafe_allow_html=True)
+        
+        # Initialize session state for inputs
+        if 'standard_risk' not in st.session_state: st.session_state.standard_risk = 300
+        if 'eval_target' not in st.session_state: st.session_state.eval_target = 6000
+        if 'max_loss' not in st.session_state: st.session_state.max_loss = 3000
+        if 'current_balance' not in st.session_state: st.session_state.current_balance = 2800 # Profit, not total balance
+        if 'streak' not in st.session_state: st.session_state.streak = 5
+
+        st.markdown("#### Evaluation Parameters")
+        c1, c2, c3 = st.columns(3)
+        with c1:
+            st.session_state.standard_risk = st.number_input("Standard $ Risk / Trade", min_value=1, value=st.session_state.standard_risk, step=10)
+        with c2:
+            st.session_state.eval_target = st.number_input("Profit Target ($)", min_value=1, value=st.session_state.eval_target, step=100)
+        with c3:
+            st.session_state.max_loss = st.number_input("Max Drawdown ($)", min_value=1, value=st.session_state.max_loss, step=100)
+
+        st.markdown("#### Daily Status")
+        c1, c2 = st.columns(2)
+        with c1:
+            st.session_state.current_balance = st.number_input("Current Profit ($)", value=st.session_state.current_balance, step=50)
+        with c2:
+            st.session_state.streak = st.number_input("Consecutive Win(+) / Loss(-) Streak", value=st.session_state.streak, step=1)
+        
+        st.markdown("---")
+        
+        # --- RISK LOGIC BASED ON ICT LECTURE ---
+        profit_loss = st.session_state.current_balance
+        is_in_profit = profit_loss > 0
+        
+        # Rule 1: Handle Drawdown - if not in profit, use minimum risk.
+        if not is_in_profit:
+            suggested_risk = st.session_state.standard_risk / 2  # Or a fixed minimum, e.g., $100
+            reason = "Account is in drawdown. Use Minimum Risk to regain positive equity."
+            risk_class = "risk-minimum"
+        
+        # Rule 2: Handle Consecutive Losses
+        elif st.session_state.streak < 0:
+            suggested_risk = st.session_state.standard_risk / 2
+            reason = f"On a {abs(st.session_state.streak)}-trade losing streak. Drop to Minimum Risk until the next win."
+            risk_class = "risk-minimum"
+
+        # Rule 3: Handle Consecutive Wins (The "Flatline Drawdown" Rule)
+        elif st.session_state.streak >= WIN_STREAK_THRESHOLD:
+            suggested_risk = st.session_state.standard_risk / 2
+            reason = f"On a {st.session_state.streak}-trade winning streak. Reduce to Defensive Risk to protect profits and anticipate a loss."
+            risk_class = "risk-defensive"
+        
+        # Default: Standard Operating Procedure
+        else:
+            suggested_risk = st.session_state.standard_risk
+            reason = "Standard conditions. Proceed with your normal risk parameter."
+            risk_class = "risk-normal"
+
+        # Override for Target Approaching
+        if st.session_state.eval_target - profit_loss <= st.session_state.standard_risk * 2 and profit_loss > 0:
+            suggested_risk = st.session_state.standard_risk / 3
+            reason = "Approaching profit target. Switch to Capital Preservation risk to secure the pass."
+            risk_class = "risk-defensive"
+
+        # Final state: Passed
+        if profit_loss >= st.session_state.eval_target:
+             suggested_risk = 0
+             reason = "Congratulations, target has been reached! Stop trading."
+             risk_class = "risk-passed"
+
+        st.markdown("#### Recommended Action")
+        st.markdown(f'<div class="risk-output {risk_class}"><strong>Suggested Risk for Next Trade: ${int(suggested_risk)}</strong><br><small>{reason}</small></div>', unsafe_allow_html=True)
+        
+        st.markdown('</div>', unsafe_allow_html=True)
+
 def display_tgif_alert(plan):
     with st.expander("🎯 Potential T.G.I.F. (Thank God It's Friday) Setup Alert!", expanded=False):
-        st.markdown("""
-        <div style="padding: 1rem; border-radius: 8px; background-color: rgba(0, 150, 255, 0.1); border-left: 5px solid #00d4ff; color: #e0e0e0;">
-            <p>Today is Friday, which means the <strong>T.G.I.F. Setup</strong> might be in play. This is a model for a retracement back into the weekly range.</p>
-        </div>
-        """, unsafe_allow_html=True)
+        st.markdown("""<div style="padding: 1rem; border-radius: 8px; background-color: rgba(0, 150, 255, 0.1); border-left: 5px solid #00d4ff; color: #e0e0e0;"><p>Today is Friday, which means the <strong>T.G.I.F. Setup</strong> might be in play. This is a model for a retracement back into the weekly range.</p></div>""", unsafe_allow_html=True)
         st.markdown("#### ⚠️ Pre-Conditions (MUST be met):")
-        st.markdown("""
-        **1. Strong Weekly Trend:** Has the week been strongly directional (e.g., multiple consecutive bullish or bearish days)?
-        **2. Higher Timeframe Level Hit:** Has price reached a significant **premium array** (for a bullish week) or **discount array** (for a bearish week) on the weekly/monthly chart?
-        """)
+        st.markdown("""**1. Strong Weekly Trend:** Has the week been strongly directional (e.g., multiple consecutive bullish or bearish days)?\n**2. Higher Timeframe Level Hit:** Has price reached a significant **premium array** (for a bullish week) or **discount array** (for a bearish week) on the weekly/monthly chart?""")
         st.info("If these conditions are not met, this setup is unlikely. If they are, proceed with the plan below.")
         st.markdown("#### 🔎 Friday Action Plan & Key Times (ET):")
         st.markdown("**Step 1: Mark the Weekly Range**\nIdentify the absolute lowest low and highest high of the week so far.")
@@ -294,93 +363,13 @@ def display_action_checklist(plan):
 
 def display_perfect_trade_idea(plan):
     st.markdown("## 🎯 The A+ Trade Setup")
-
     if plan == "Standard Day Plan":
-        st.markdown("""
-        <div class="checklist-item" style="border-left: 5px solid #4caf50;">
-            <h4 style="margin-top:0; color: #81c784;">Profile A: Standard Day Plan (Reversal/Continuation)</h4>
-            <ol>
-                <li><strong>Phase I (Pre-Market):</strong> Confirm HTF Bias. Mark the <strong>Previous Day's PM High/Low</strong> and the <strong>London Session High/Low</strong> as your key liquidity levels.</li>
-                <li><strong>Phase II (The Tactic):</strong> Focus on the <strong>NY AM Silver Bullet (10-11 AM)</strong>. Your goal is to enter on a continuation of the trend established in London.</li>
-                <li><strong>Phase III (The Setup):</strong>
-                    <ul>
-                        <li>Wait for the 9:30 AM open to create a small pullback that **sweeps a short-term low** (for longs) or high (for shorts).</li>
-                        <li>This sweep must respect the major London session high/low.</li>
-                    </ul>
-                </li>
-                <li><strong>Phase IV (The Entry):</strong>
-                    <ul>
-                        <li>After the sweep, wait for a lower timeframe (1m/5m) **Market Structure Shift (MSS)** with displacement.</li>
-                        <li>Enter on a retracement into the **Fair Value Gap (FVG)** created during the MSS.</li>
-                        <li><strong>Stop Loss:</strong> Place below the low (or above the high) that was created by the liquidity sweep.</li>
-                    </ul>
-                </li>
-                 <li><strong>Phase V (The Target):</strong> Your primary target is the opposing OS4L liquidity level (e.g., the London High or the Previous Day's PM High).</li>
-            </ol>
-        </div>
-        """, unsafe_allow_html=True)
-
+        st.markdown("""<div class="checklist-item" style="border-left: 5px solid #4caf50;"><h4 style="margin-top:0; color: #81c784;">Profile A: Standard Day Plan (Reversal/Continuation)</h4><ol><li><strong>Phase I (Pre-Market):</strong> Confirm HTF Bias. Mark the <strong>Previous Day's PM High/Low</strong> and the <strong>London Session High/Low</strong> as your key liquidity levels.</li><li><strong>Phase II (The Tactic):</strong> Focus on the <strong>NY AM Silver Bullet (10-11 AM)</strong>. Your goal is to enter on a continuation of the trend established in London.</li><li><strong>Phase III (The Setup):</strong><ul><li>Wait for the 9:30 AM open to create a small pullback that <strong>sweeps a short-term low</strong> (for longs) or high (for shorts).</li><li>This sweep must respect the major London session high/low.</li></ul></li><li><strong>Phase IV (The Entry):</strong><ul><li>After the sweep, wait for a lower timeframe (1m/5m) <strong>Market Structure Shift (MSS)</strong> with displacement.</li><li>Enter on a retracement into the <strong>Fair Value Gap (FVG)</strong> created during the MSS.</li><li><strong>Stop Loss:</strong> Place below the low (or above the high) that was created by the liquidity sweep.</li></ul></li><li><strong>Phase V (The Target):</strong> Your primary target is the opposing OS4L liquidity level (e.g., the London High or the Previous Day's PM High).</li></ol></div>""", unsafe_allow_html=True)
     if plan == "News Day Plan":
-        st.markdown("""
-        <div class="checklist-item" style="border-left: 5px solid #ff9800;">
-            <h4 style="margin-top:0; color: #ffb74d;">Profile C: High-Impact News Day Plan (Volatility)</h4>
-            <ol>
-                <li><strong>Phase I (Pre-News):</strong> Stand aside. Your only task is to mark the **NY Lunch Range High/Low (12:00 PM - 1:30 PM)</strong>. This is the target liquidity.</li>
-                <li><strong>Phase II (The Tactic):</strong> Your focus is exclusively on the **NY PM Silver Bullet (2:00 PM - 3:00 PM)** window, immediately following the news release.</li>
-                <li><strong>Phase III (The Setup):</strong>
-                    <ul>
-                        <li>Wait for the news release to cause a violent spike that **sweeps the liquidity** above the lunch high or below the lunch low.</li>
-                    </ul>
-                </li>
-                <li><strong>Phase IV (The Entry):</strong>
-                    <ul>
-                        <li>After the sweep, wait for a clear **Market Structure Shift (MSS)** with displacement as price reverses.</li>
-                        <li>Enter on a retracement into the **Fair Value Gap (FVG)** created by that reversal.</li>
-                        <li><strong>Stop Loss:</strong> Place just beyond the peak of the volatility spike (the news-driven high or low).</li>
-                    </ul>
-                </li>
-                 <li><strong>Phase V (The Target):</strong> Your primary target is a significant structural level on the opposite side of the range or a major HTF liquidity pool.</li>
-            </ol>
-        </div>
-        """, unsafe_allow_html=True)
-    
-    st.markdown("""
-    <div class="checklist-item" style="border-left: 5px solid #64b5f6;">
-        <h4 style="margin-top:0; color: #64b5f6;">Profile B: Trending Day Plan (Continuation)</h4>
-        <p style="font-size:0.9rem; margin-top:-10px; color: #b0b0b0;">(This profile is identified manually when price shows extreme one-sided momentum from the open, breaking key levels without hesitation.)</p>
-        <ol>
-            <li><strong>Phase I (Identify):</strong> Recognize that price is not creating complex manipulations. It is moving efficiently in one direction. **Abandon the deep discount/reversal model.**</li>
-            <li><strong>Phase II (The Tactic):</strong> Stalk shallow pullbacks. Your focus is on joining the established momentum.</li>
-            <li><strong>Phase III (The Setup):</strong>
-                <ul>
-                    <li>Wait for price to make an impulsive move, then form a brief, tight **consolidation (a "flag").**</li>
-                    <li>The setup condition is the **aggressive breakout** from this consolidation.</li>
-                </ul>
-            </li>
-            <li><strong>Phase IV (The Entry):</strong>
-                <ul>
-                    <li>As price expands from the consolidation, it will leave a new, small **Fair Value Gap (FVG).**</li>
-                    <li>Enter on the first shallow pullback into this immediate FVG.</li>
-                    <li><strong>Stop Loss:</strong> Place just below the low of the small consolidation range.</li>
-                </ul>
-            </li>
-             <li><strong>Phase V (The Target):</strong> Targets are often based on measured legs of expansion or distant HTF liquidity levels.</li>
-        </ol>
-    </div>
-    """, unsafe_allow_html=True)
-
+        st.markdown("""<div class="checklist-item" style="border-left: 5px solid #ff9800;"><h4 style="margin-top:0; color: #ffb74d;">Profile C: High-Impact News Day Plan (Volatility)</h4><ol><li><strong>Phase I (Pre-News):</strong> Stand aside. Your only task is to mark the <strong>NY Lunch Range High/Low (12:00 PM - 1:30 PM)</strong>. This is the target liquidity.</li><li><strong>Phase II (The Tactic):</strong> Your focus is exclusively on the <strong>NY PM Silver Bullet (2:00 PM - 3:00 PM)</strong> window, immediately following the news release.</li><li><strong>Phase III (The Setup):</strong><ul><li>Wait for the news release to cause a violent spike that <strong>sweeps the liquidity</strong> above the lunch high or below the lunch low.</li></ul></li><li><strong>Phase IV (The Entry):</strong><ul><li>After the sweep, wait for a clear <strong>Market Structure Shift (MSS)</strong> with displacement as price reverses.</li><li>Enter on a retracement into the <strong>Fair Value Gap (FVG)</strong> created by that reversal.</li><li><strong>Stop Loss:</strong> Place just beyond the peak of the volatility spike (the news-driven high or low).</li></ul></li><li><strong>Phase V (The Target):</strong> Your primary target is a significant structural level on the opposite side of the range or a major HTF liquidity pool.</li></ol></div>""", unsafe_allow_html=True)
+    st.markdown("""<div class="checklist-item" style="border-left: 5px solid #64b5f6;"><h4 style="margin-top:0; color: #64b5f6;">Profile B: Trending Day Plan (Continuation)</h4><p style="font-size:0.9rem; margin-top:-10px; color: #b0b0b0;">(This profile is identified manually when price shows extreme one-sided momentum from the open, breaking key levels without hesitation.)</p><ol><li><strong>Phase I (Identify):</strong> Recognize that price is not creating complex manipulations. It is moving efficiently in one direction. **Abandon the deep discount/reversal model.**</li><li><strong>Phase II (The Tactic):</strong> Stalk shallow pullbacks. Your focus is on joining the established momentum.</li><li><strong>Phase III (The Setup):</strong><ul><li>Wait for price to make an impulsive move, then form a brief, tight <strong>consolidation (a "flag").**</li><li>The setup condition is the **aggressive breakout** from this consolidation.</li></ul></li><li><strong>Phase IV (The Entry):</strong><ul><li>As price expands from the consolidation, it will leave a new, small **Fair Value Gap (FVG).**</li><li>Enter on the first shallow pullback into this immediate FVG.</li><li><strong>Stop Loss:</strong> Place just below the low of the small consolidation range.</li></ul></li><li><strong>Phase V (The Target):</strong> Targets are often based on measured legs of expansion or distant HTF liquidity levels.</li></ol></div>""", unsafe_allow_html=True)
     if plan == "No Trade Day":
-        st.markdown("""
-        <div class="checklist-item" style="border-left: 5px solid #f44336;">
-            <h4 style="margin-top:0; color: #ff6b6b;">📴 No Trade Day</h4>
-            <p>Today's risk environment is not conducive to high-probability trading due to Tier-1 afternoon events. The primary objective is capital preservation.</p>
-            <ul>
-                <li><strong>Observe:</strong> Watch the market's reaction to news for educational purposes.</li>
-                <li><strong>Analyze:</strong> Use the time for backtesting or reviewing past trades.</li>
-                <li><strong>Prepare:</strong> Plan your strategy for the next trading day.</li>
-            </ul>
-        </div>
-        """, unsafe_allow_html=True)
+        st.markdown("""<div class="checklist-item" style="border-left: 5px solid #f44336;"><h4 style="margin-top:0; color: #ff6b6b;">📴 No Trade Day</h4><p>Today's risk environment is not conducive to high-probability trading due to Tier-1 afternoon events. The primary objective is capital preservation.</p><ul><li><strong>Observe:</strong> Watch the market's reaction to news for educational purposes.</li><li><strong>Analyze:</strong> Use the time for backtesting or reviewing past trades.</li><li><strong>Prepare:</strong> Plan your strategy for the next trading day.</li></ul></div>""", unsafe_allow_html=True)
 
 def display_timeline_events(events, title):
     if not events: return
@@ -422,27 +411,25 @@ def display_market_status():
 # --- MAIN APP ---
 def main():
     st.title("📈 US Index Trading Plan ($NQ, $ES)")
+    
+    # --- CALL THE NEW MODULES HERE ---
     display_market_status()
+    display_risk_management_module() # <-- NEW MODULE PLACED HERE
 
-    st.markdown("")
+    st.markdown("---") # Visual Separator
+    
     if st.button("🔄 Fetch & Update Live Economic Data", type="primary", help="Runs the scraper and updates the database with the latest events."):
         with st.spinner("🚀 Running scraper... please wait."):
             try:
-                # Run the external scraper script
                 result = subprocess.run([sys.executable, "ffscraper.py"], capture_output=True, check=True, text=True)
                 st.success("✅ Scraper completed successfully!")
                 with st.expander("📋 Scraper Log"):
                     st.code(result.stdout)
-
-                # Update the database from the newly created CSV file
                 with st.spinner("💾 Updating database..."):
                     upserted, modified = update_db_from_csv(SCRAPED_DATA_PATH)
                     st.success(f"Database updated! ✨ {upserted} new events added, {modified} existing events updated.")
-                
-                # Clear cache and rerun to show new data immediately
                 st.cache_data.clear()
                 st.rerun()
-
             except FileNotFoundError:
                  st.error("❌ Scraper script 'ffscraper.py' not found. Make sure it's in the same directory.")
             except subprocess.CalledProcessError as e:
@@ -450,7 +437,7 @@ def main():
                 st.code(f"Error: {e.stderr}")
             except Exception as e:
                 st.error(f"❌ An unexpected error occurred: {e}")
-
+    
     col1, col2 = st.columns([2, 2])
     with col1:
         selected_date = st.date_input("📅 Analysis Date", value=date.today())
@@ -461,16 +448,13 @@ def main():
     
     st.markdown("---")
     
-    # Handle weekend display
     if selected_date.weekday() >= 5:
         st.markdown('<div class="main-plan-card no-trade"><h1>📴 MARKET CLOSED</h1><p style="font-size: 1.1rem; margin-top: 1rem;">US indices do not trade on weekends. 📚 Use this time to journal, review trades, or recharge.</p></div>', unsafe_allow_html=True)
         return
 
-    # Load data from MongoDB
     df = get_events_from_db()
     
     if df.empty:
-        # This message will show if the DB connection fails or the DB is empty.
         st.warning("👋 No economic data found. Click the **Fetch & Update** button above to load data.")
         return
 
@@ -482,18 +466,14 @@ def main():
     if view_option == "Today":
         events = get_events_for(selected_date)
         if not events:
-            # Provide a default "Standard Day" plan if no events are found for the day
             plan, reason = "Standard Day Plan", "No economic events found. Proceed with Standard Day Plan."
             morning, afternoon, allday = [], [], []
         else:
             plan, reason, morning, afternoon, allday = analyze_day_events(selected_date, events)
 
         display_plan_card(plan, reason)
-
-        # Display TGIF alert on Fridays
         if selected_date.weekday() == 4:
             display_tgif_alert(plan)
-
         display_action_checklist(plan)
         display_perfect_trade_idea(plan)
         
@@ -506,23 +486,18 @@ def main():
     else:
         st.markdown("## 🗓 Weekly Outlook")
         start_of_week = selected_date - timedelta(days=selected_date.weekday())
-        for i in range(5): # Iterate Monday to Friday
+        for i in range(5):
             d = start_of_week + timedelta(days=i)
             events_for_day = get_events_for(d)
-            
-            # Use an expander for each day in the weekly view for better organization
             with st.expander(f"**{d.strftime('%A, %b %d')}**", expanded=(d == selected_date)):
                 if not events_for_day:
                     plan, reason = "Standard Day Plan", "No economic events found. Proceed with Standard Day Plan."
                 else:
                     plan, reason, *_ = analyze_day_events(d, events_for_day)
-                
-                # Display a more compact card for the weekly view
                 if plan == "No Trade Day": card_class, icon = "no-trade", "🚫"
                 elif plan == "News Day Plan": card_class, icon = "news-day", "📰"
                 else: card_class, icon = "standard-day", "✅"
                 st.markdown(f'<div class="main-plan-card {card_class}" style="margin: 0.5rem 0; padding: 1rem;"><h3 style="margin:0;">{icon} {plan}</h3><p style="margin-bottom:0;">{reason}</p></div>', unsafe_allow_html=True)
-
 
 if __name__ == "__main__":
     main()
