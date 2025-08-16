@@ -21,115 +21,267 @@ SCRAPED_DATA_PATH = "latest_forex_data.csv"
 DB_NAME = "DailyTradingPlanner"
 COLLECTION_NAME = "economic_events"
 
-
-# --- CSS STYLE ---
-st.markdown("""
-<style>
-    .main-plan-card {
-        padding: 1.5rem;
-        border-radius: 12px;
-        text-align: center;
-        margin: 1rem 0;
-        border: 3px solid;
-        box-shadow: 0 4px 12px rgba(0,0,0,0.3);
-    }
-    .no-trade { 
-        background: rgba(244, 67, 54, 0.15); 
-        border-color: #f44336; 
-        color: #ff6b6b;
-        box-shadow: 0 0 20px rgba(244, 67, 54, 0.3);
-    }
-    .news-day { 
-        background: rgba(255, 152, 0, 0.15); 
-        border-color: #ff9800; 
-        color: #ffb74d;
-        box-shadow: 0 0 20px rgba(255, 152, 0, 0.3);
-    }
-    .standard-day { 
-        background: rgba(76, 175, 80, 0.15); 
-        border-color: #4caf50; 
-        color: #81c784;
-        box-shadow: 0 0 20px rgba(76, 175, 80, 0.3);
-    }
-    .checklist-item {
-        background: rgba(255, 255, 255, 0.05);
-        border: 1px solid rgba(255, 255, 255, 0.1);
-        padding: 1rem 1.25rem;
-        margin: 0.75rem 0;
-        border-left: 5px solid #00d4ff;
-        border-radius: 8px;
-        color: #e0e0e0;
-        backdrop-filter: blur(10px);
-    }
-    .event-timeline {
-        display: flex;
-        align-items: center;
-        padding: 0.6rem;
-        margin: 0.3rem 0;
-        border-radius: 6px;
-        background: rgba(255, 255, 255, 0.05);
-        border: 1px solid rgba(255, 255, 255, 0.1);
-        color: #e0e0e0;
-        backdrop-filter: blur(5px);
-    }
-    .event-high { 
-        border-left: 4px solid #ff5252;
-        background: rgba(255, 82, 82, 0.1);
-    }
-    .event-medium { 
-        border-left: 4px solid #ff9800;
-        background: rgba(255, 152, 0, 0.1);
-    }
-    .event-low { 
-        border-left: 4px solid #4caf50;
-        background: rgba(76, 175, 80, 0.1);
-    }
-    .metric-card {
-        background: rgba(255, 255, 255, 0.08);
-        border: 1px solid rgba(255, 255, 255, 0.15);
-        padding: 1rem;
-        border-radius: 10px;
-        text-align: center;
-        backdrop-filter: blur(10px);
-        box-shadow: 0 4px 15px rgba(0,0,0,0.2);
-    }
-    .metric-card .metric-label { color: #b0b0b0; font-size: 0.9rem; }
-    .metric-card .metric-value { color: #ffffff; font-size: 1.2rem; font-weight: bold; }
-    
-    /* --- NEW STYLES FOR RISK MODULE --- */
-    .risk-container {
-        padding: 1.5rem;
-        border-radius: 12px;
-        border: 1px solid #4A5568;
-        background: #2D3748;
-        margin-bottom: 2rem;
-    }
-    .risk-output {
-        padding: 1rem;
-        border-radius: 8px;
-        text-align: center;
-        color: white;
-        font-weight: bold;
-        font-size: 1.1rem;
-    }
-    .risk-normal { background: #3182CE; } /* Blue */
-    .risk-defensive { background: #DD6B20; } /* Orange */
-    .risk-minimum { background: #E53E3E; } /* Red */
-    .risk-passed { background: #38A169; } /* Green */
-
-</style>
-""", unsafe_allow_html=True)
-
-# --- STRATEGY RULES ---
+# --- MORNING_CUTOFF and other constants ---
 MORNING_CUTOFF = time(12, 0)
 AFTERNOON_NO_TRADE_START = time(13, 55)
 NO_TRADE_KEYWORDS = ['FOMC Statement', 'FOMC Press Conference', 'Interest Rate Decision', 'Monetary Policy Report']
 FORCED_HIGH_IMPACT_KEYWORDS = ['Powell Speaks', 'Fed Chair', 'Non-Farm', 'NFP', 'CPI', 'Consumer Price Index', 'PPI', 'Producer Price Index', 'GDP']
-WIN_STREAK_THRESHOLD = 5 # Rule: After 5 wins, reduce risk.
+WIN_STREAK_THRESHOLD = 5
 
-# --- DATABASE LOGIC ---
+# --- ENHANCED CSS STYLES ---
+st.markdown("""
+<style>
+    /* Base styling */
+    .stApp { background: linear-gradient(135deg, #0f1419 0%, #1a1f2e 100%); }
+    
+    /* Quick scan dashboard layout */
+    .trading-dashboard {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 20px;
+        margin-bottom: 30px;
+    }
+    
+    /* Main trading plan - large, prominent */
+    .main-plan-card {
+        grid-column: span 2;
+        padding: 2rem;
+        border-radius: 16px;
+        text-align: center;
+        margin: 1rem 0;
+        border: 4px solid;
+        box-shadow: 0 8px 32px rgba(0,0,0,0.4);
+        backdrop-filter: blur(20px);
+        position: relative;
+        overflow: hidden;
+    }
+    
+    .main-plan-card::before {
+        content: '';
+        position: absolute;
+        top: 0;
+        left: -100%;
+        width: 100%;
+        height: 100%;
+        background: linear-gradient(90deg, transparent, rgba(255,255,255,0.1), transparent);
+        transition: left 0.5s;
+    }
+    
+    .main-plan-card:hover::before {
+        left: 100%;
+    }
+    
+    .no-trade { 
+        background: linear-gradient(135deg, rgba(244, 67, 54, 0.2), rgba(183, 28, 28, 0.1)); 
+        border-color: #f44336; 
+        color: #ffcdd2;
+    }
+    .news-day { 
+        background: linear-gradient(135deg, rgba(255, 152, 0, 0.2), rgba(239, 108, 0, 0.1)); 
+        border-color: #ff9800; 
+        color: #ffcc02;
+    }
+    .standard-day { 
+        background: linear-gradient(135deg, rgba(76, 175, 80, 0.2), rgba(56, 142, 60, 0.1)); 
+        border-color: #4caf50; 
+        color: #a5d6a7;
+    }
+    
+    /* Quick info cards */
+    .quick-info-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+        gap: 15px;
+        margin: 20px 0;
+    }
+    
+    .info-card {
+        background: rgba(255, 255, 255, 0.05);
+        border: 1px solid rgba(255, 255, 255, 0.1);
+        border-radius: 12px;
+        padding: 1rem;
+        text-align: center;
+        backdrop-filter: blur(10px);
+        transition: all 0.3s ease;
+        box-shadow: 0 4px 15px rgba(0,0,0,0.2);
+    }
+    
+    .info-card:hover {
+        transform: translateY(-5px);
+        box-shadow: 0 8px 25px rgba(0,0,0,0.3);
+        border-color: rgba(255, 255, 255, 0.2);
+    }
+    
+    .info-card .metric-label { 
+        color: #94a3b8; 
+        font-size: 0.85rem; 
+        font-weight: 500;
+        margin-bottom: 8px;
+    }
+    .info-card .metric-value { 
+        color: #ffffff; 
+        font-size: 1.4rem; 
+        font-weight: 700;
+        text-shadow: 0 2px 4px rgba(0,0,0,0.3);
+    }
+    
+    /* Risk management - prominently displayed */
+    .risk-section {
+        background: linear-gradient(135deg, rgba(30, 41, 59, 0.8), rgba(15, 23, 42, 0.6));
+        border: 2px solid rgba(59, 130, 246, 0.3);
+        border-radius: 16px;
+        padding: 1.5rem;
+        margin: 20px 0;
+        box-shadow: 0 8px 32px rgba(59, 130, 246, 0.1);
+    }
+    
+    .risk-output {
+        padding: 1.2rem;
+        border-radius: 12px;
+        text-align: center;
+        color: white;
+        font-weight: bold;
+        font-size: 1.3rem;
+        margin: 15px 0;
+        box-shadow: 0 4px 15px rgba(0,0,0,0.3);
+        transition: all 0.3s ease;
+    }
+    
+    .risk-output:hover {
+        transform: scale(1.02);
+    }
+    
+    .risk-normal { background: linear-gradient(135deg, #3182CE, #2c5aa0); }
+    .risk-defensive { background: linear-gradient(135deg, #DD6B20, #c05621); }
+    .risk-minimum { background: linear-gradient(135deg, #E53E3E, #c53030); }
+    .risk-passed { background: linear-gradient(135deg, #38A169, #2f855a); }
+    
+    /* Compact event timeline */
+    .event-compact {
+        display: flex;
+        align-items: center;
+        padding: 0.5rem 0.75rem;
+        margin: 0.25rem 0;
+        border-radius: 8px;
+        background: rgba(255, 255, 255, 0.03);
+        border-left: 4px solid;
+        font-size: 0.9rem;
+        transition: all 0.2s ease;
+    }
+    
+    .event-compact:hover {
+        background: rgba(255, 255, 255, 0.08);
+        transform: translateX(5px);
+    }
+    
+    .event-high { border-left-color: #ef4444; background: rgba(239, 68, 68, 0.1); }
+    .event-medium { border-left-color: #f59e0b; background: rgba(245, 158, 11, 0.1); }
+    .event-low { border-left-color: #10b981; background: rgba(16, 185, 129, 0.1); }
+    
+    .event-time {
+        min-width: 80px;
+        font-weight: 600;
+        color: #60a5fa;
+    }
+    
+    .event-currency {
+        min-width: 45px;
+        font-weight: 700;
+        text-align: center;
+    }
+    
+    .event-currency.usd {
+        color: #fbbf24;
+        text-shadow: 0 0 10px rgba(251, 191, 36, 0.5);
+    }
+    
+    /* Action items - scannable checklist */
+    .action-section {
+        background: linear-gradient(135deg, rgba(17, 24, 39, 0.8), rgba(31, 41, 55, 0.6));
+        border: 1px solid rgba(75, 85, 99, 0.3);
+        border-radius: 12px;
+        padding: 1.5rem;
+        margin: 20px 0;
+    }
+    
+    .action-item {
+        display: flex;
+        align-items: center;
+        padding: 0.75rem;
+        margin: 0.5rem 0;
+        background: rgba(255, 255, 255, 0.03);
+        border-left: 4px solid #06b6d4;
+        border-radius: 8px;
+        transition: all 0.3s ease;
+    }
+    
+    .action-item:hover {
+        background: rgba(255, 255, 255, 0.08);
+        border-left-color: #0891b2;
+    }
+    
+    .action-emoji {
+        font-size: 1.2rem;
+        margin-right: 12px;
+        min-width: 30px;
+    }
+    
+    /* Tabs styling */
+    .stTabs [data-baseweb="tab-list"] {
+        gap: 8px;
+        background: rgba(30, 41, 59, 0.5);
+        border-radius: 12px;
+        padding: 4px;
+    }
+    
+    .stTabs [data-baseweb="tab"] {
+        background: rgba(255, 255, 255, 0.05);
+        border-radius: 8px;
+        color: #94a3b8;
+        border: none;
+        padding: 0.75rem 1.5rem;
+    }
+    
+    .stTabs [aria-selected="true"] {
+        background: linear-gradient(135deg, #3b82f6, #1e40af) !important;
+        color: white !important;
+    }
+    
+    /* Buttons */
+    .stButton button {
+        background: linear-gradient(135deg, #3b82f6, #1e40af);
+        border: none;
+        border-radius: 12px;
+        color: white;
+        font-weight: 600;
+        padding: 0.75rem 2rem;
+        transition: all 0.3s ease;
+        box-shadow: 0 4px 15px rgba(59, 130, 246, 0.3);
+    }
+    
+    .stButton button:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 8px 25px rgba(59, 130, 246, 0.4);
+    }
+    
+    /* Typography improvements */
+    h1 { color: #f1f5f9; text-shadow: 0 2px 4px rgba(0,0,0,0.3); }
+    h2 { color: #e2e8f0; margin-bottom: 1rem; }
+    h3 { color: #cbd5e1; }
+    
+    /* Weekend styling */
+    .weekend-notice {
+        background: linear-gradient(135deg, rgba(99, 102, 241, 0.2), rgba(67, 56, 202, 0.1));
+        border: 2px solid #6366f1;
+        border-radius: 16px;
+        padding: 2rem;
+        text-align: center;
+        color: #c7d2fe;
+    }
+</style>
+""", unsafe_allow_html=True)
 
-# Initialize connection to MongoDB using Streamlit's secrets
+# --- DATABASE AND UTILITY FUNCTIONS (keeping existing ones) ---
 @st.cache_resource
 def init_connection():
     try:
@@ -140,8 +292,7 @@ def init_connection():
         st.error(f"Failed to connect to MongoDB. Please check your secrets.toml file. Error: {e}")
         return None
 
-# Fetch all events from the database
-@st.cache_data(ttl=600) # Cache data for 10 minutes
+@st.cache_data(ttl=600)
 def get_events_from_db():
     client = init_connection()
     if client is None:
@@ -154,7 +305,6 @@ def get_events_from_db():
         return pd.DataFrame()
     return pd.DataFrame(items)
 
-# Update the database with data from the CSV file
 def update_db_from_csv(file_path):
     client = init_connection()
     if client is None:
@@ -183,7 +333,6 @@ def update_db_from_csv(file_path):
             modified_count += 1
     return upserted_count, modified_count
 
-# --- UTILITIES ---
 def get_current_market_time():
     et = pytz.timezone('US/Eastern')
     return datetime.now(et)
@@ -215,12 +364,12 @@ def parse_impact(impact_str):
     if 'low' in lower: return "Low"
     return "Low"
 
-# --- ANALYSIS LOGIC ---
 def analyze_day_events(target_date, events):
     plan = "Standard Day Plan"
     reason = "No high-impact USD news found. Proceed with the Standard Day Plan and your directional bias."
     has_high_impact_usd_event = False
     morning_events, afternoon_events, all_day_events = [], [], []
+    
     for event in events:
         event_time = parse_time(event.get('time', ''))
         event_name = event.get('event', '')
@@ -229,158 +378,34 @@ def analyze_day_events(target_date, events):
         is_forced_high = any(keyword.lower() in event_name.lower() for keyword in FORCED_HIGH_IMPACT_KEYWORDS)
         is_high_impact = (parsed_impact == 'High') or is_forced_high
         display_impact = "High (Forced)" if is_forced_high and parsed_impact != 'High' else ("High" if is_high_impact else parsed_impact)
-        event_details = {'name': event_name, 'currency': currency, 'impact': display_impact, 'time': event_time.strftime('%I:%M %p') if event_time else 'All Day', 'raw_time': event_time}
+        
+        event_details = {
+            'name': event_name, 
+            'currency': currency, 
+            'impact': display_impact, 
+            'time': event_time.strftime('%I:%M %p') if event_time else 'All Day', 
+            'raw_time': event_time
+        }
+        
         if event_time is None:
             all_day_events.append(event_details)
         elif event_time < MORNING_CUTOFF:
             morning_events.append(event_details)
         else:
             afternoon_events.append(event_details)
+        
         if currency == 'USD':
             if any(keyword.lower() in event_name.lower() for keyword in NO_TRADE_KEYWORDS):
                 if event_time and event_time >= AFTERNOON_NO_TRADE_START:
                     return "No Trade Day", f"Critical afternoon USD event '{event_name}' at {event_time.strftime('%I:%M %p')}. Capital preservation is the priority.", morning_events, afternoon_events, all_day_events
             if is_high_impact and event_time:
                 has_high_impact_usd_event = True
+    
     if has_high_impact_usd_event:
         plan = "News Day Plan"
         reason = "High-impact USD news detected. The News Day Plan is active. Be patient and wait for the news-driven liquidity sweep."
-    return plan, reason, morning_events, afternoon_events, all_day_events
-
-# --- UI COMPONENTS ---
-
-# ***************************************************************
-# --- NEW: DYNAMIC RISK MANAGEMENT MODULE ---
-# ***************************************************************
-def display_risk_management_module():
-    st.markdown("## 🧠 Dynamic Risk Management")
     
-    with st.container():
-        st.markdown('<div class="risk-container">', unsafe_allow_html=True)
-        
-        # Initialize session state for inputs
-        if 'standard_risk' not in st.session_state: st.session_state.standard_risk = 300
-        if 'eval_target' not in st.session_state: st.session_state.eval_target = 6000
-        if 'max_loss' not in st.session_state: st.session_state.max_loss = 3000
-        if 'current_balance' not in st.session_state: st.session_state.current_balance = 2800 # Profit, not total balance
-        if 'streak' not in st.session_state: st.session_state.streak = 5
-
-        st.markdown("#### Evaluation Parameters")
-        c1, c2, c3 = st.columns(3)
-        with c1:
-            st.session_state.standard_risk = st.number_input("Standard $ Risk / Trade", min_value=1, value=st.session_state.standard_risk, step=10)
-        with c2:
-            st.session_state.eval_target = st.number_input("Profit Target ($)", min_value=1, value=st.session_state.eval_target, step=100)
-        with c3:
-            st.session_state.max_loss = st.number_input("Max Drawdown ($)", min_value=1, value=st.session_state.max_loss, step=100)
-
-        st.markdown("#### Daily Status")
-        c1, c2 = st.columns(2)
-        with c1:
-            st.session_state.current_balance = st.number_input("Current Profit ($)", value=st.session_state.current_balance, step=50)
-        with c2:
-            st.session_state.streak = st.number_input("Consecutive Win(+) / Loss(-) Streak", value=st.session_state.streak, step=1)
-        
-        st.markdown("---")
-        
-        # --- RISK LOGIC BASED ON ICT LECTURE ---
-        profit_loss = st.session_state.current_balance
-        is_in_profit = profit_loss > 0
-        
-        # Rule 1: Handle Drawdown - if not in profit, use minimum risk.
-        if not is_in_profit:
-            suggested_risk = st.session_state.standard_risk / 2  # Or a fixed minimum, e.g., $100
-            reason = "Account is in drawdown. Use Minimum Risk to regain positive equity."
-            risk_class = "risk-minimum"
-        
-        # Rule 2: Handle Consecutive Losses
-        elif st.session_state.streak < 0:
-            suggested_risk = st.session_state.standard_risk / 2
-            reason = f"On a {abs(st.session_state.streak)}-trade losing streak. Drop to Minimum Risk until the next win."
-            risk_class = "risk-minimum"
-
-        # Rule 3: Handle Consecutive Wins (The "Flatline Drawdown" Rule)
-        elif st.session_state.streak >= WIN_STREAK_THRESHOLD:
-            suggested_risk = st.session_state.standard_risk / 2
-            reason = f"On a {st.session_state.streak}-trade winning streak. Reduce to Defensive Risk to protect profits and anticipate a loss."
-            risk_class = "risk-defensive"
-        
-        # Default: Standard Operating Procedure
-        else:
-            suggested_risk = st.session_state.standard_risk
-            reason = "Standard conditions. Proceed with your normal risk parameter."
-            risk_class = "risk-normal"
-
-        # Override for Target Approaching
-        if st.session_state.eval_target - profit_loss <= st.session_state.standard_risk * 2 and profit_loss > 0:
-            suggested_risk = st.session_state.standard_risk / 3
-            reason = "Approaching profit target. Switch to Capital Preservation risk to secure the pass."
-            risk_class = "risk-defensive"
-
-        # Final state: Passed
-        if profit_loss >= st.session_state.eval_target:
-             suggested_risk = 0
-             reason = "Congratulations, target has been reached! Stop trading."
-             risk_class = "risk-passed"
-
-        st.markdown("#### Recommended Action")
-        st.markdown(f'<div class="risk-output {risk_class}"><strong>Suggested Risk for Next Trade: ${int(suggested_risk)}</strong><br><small>{reason}</small></div>', unsafe_allow_html=True)
-        
-        st.markdown('</div>', unsafe_allow_html=True)
-
-def display_tgif_alert(plan):
-    with st.expander("🎯 Potential T.G.I.F. (Thank God It's Friday) Setup Alert!", expanded=False):
-        st.markdown("""<div style="padding: 1rem; border-radius: 8px; background-color: rgba(0, 150, 255, 0.1); border-left: 5px solid #00d4ff; color: #e0e0e0;"><p>Today is Friday, which means the <strong>T.G.I.F. Setup</strong> might be in play. This is a model for a retracement back into the weekly range.</p></div>""", unsafe_allow_html=True)
-        st.markdown("#### ⚠️ Pre-Conditions (MUST be met):")
-        st.markdown("""**1. Strong Weekly Trend:** Has the week been strongly directional (e.g., multiple consecutive bullish or bearish days)?\n**2. Higher Timeframe Level Hit:** Has price reached a significant **premium array** (for a bullish week) or **discount array** (for a bearish week) on the weekly/monthly chart?""")
-        st.info("If these conditions are not met, this setup is unlikely. If they are, proceed with the plan below.")
-        st.markdown("#### 🔎 Friday Action Plan & Key Times (ET):")
-        st.markdown("**Step 1: Mark the Weekly Range**\nIdentify the absolute lowest low and highest high of the week so far.")
-        if plan == "Standard Day Plan":
-            st.markdown("""**Step 2: Watch for Morning "Judas Swing" Peak (9:30 AM - 10:30 AM)**\nSince today is a Standard Day, focus on the morning window. Look for a false run higher right after the New York open - this is designed to trap buyers before the price reverses. If a sharp reversal occurs after this peak, that's likely the high of the week.\n\n✅ *This perfectly aligns with your Standard Day Plan timing and entry models.*""")
-        elif plan == "News Day Plan":
-            st.markdown("""**Step 2: Watch for Afternoon Peak Formation (1:30 PM - 2:00 PM)**\nSince today is a News Day, focus on the afternoon window. If the market continues higher through the morning, the high of the week may form around the lunch session. Watch for signs of exhaustion and reversal here, especially after news releases.\n\n✅ *This perfectly aligns with your News Day Plan timing and entry models.*""")
-        else:
-            st.markdown("""**Step 2: Observe Only (No Trading)**\nSince today is a No Trade Day, simply observe price action for educational purposes. The high/low of the week could still form, but avoid trading due to the high-risk news environment.""")
-        st.markdown("""**Step 3: Define the Retracement Target**\nOnce you are confident the week's high/low is in, use a Fibonacci tool from the weekly low to the weekly high. Your target is the area between the **20% and 30% retracement levels**.\n\n**Step 4: Execute the Trade**\nLook for a valid ICT entry model (e.g., Fair Value Gap after displacement, Order Block, Breaker) that signals a move *towards* your 20%-30% target zone using the same timing windows as your regular day plan.""")
-
-def display_plan_card(plan, reason):
-    if plan == "No Trade Day": card_class, icon, title = "no-trade", "🚫", "NO TRADE DAY"
-    elif plan == "News Day Plan": card_class, icon, title = "news-day", "📰", "NEWS DAY PLAN"
-    else: card_class, icon, title = "standard-day", "✅", "STANDARD DAY PLAN"
-    st.markdown(f'<div class="main-plan-card {card_class}"><h1>{icon} {title}</h1><p style="font-size: 1.1rem; margin-top: 1rem;">{reason}</p></div>', unsafe_allow_html=True)
-
-def display_action_checklist(plan):
-    with st.expander("📝 Action Checklist", expanded=True):
-        if plan == "News Day Plan":
-            checklist = ["🚫 DO NOT trade the morning session", "📊 Mark NY Lunch Range (12:00 PM - 1:30 PM)", "👀 Wait for liquidity raid after the news release", "🎯 Prime entry window: 2:00 PM - 3:00 PM", "✅ Look for MSS + FVG confirmation"]
-        elif plan == "Standard Day Plan":
-            checklist = ["📈 Mark Previous Day PM Range (1:30 PM - 4:00 PM)", "🌍 Mark London Session Range (2:00 AM - 5:00 AM)", "👀 Watch for NY Open Judas Swing (9:30 AM - 10:30 AM)", "🎯 Prime entry window: 10:00 AM - 11:00 AM", "✅ Enter after sweep with MSS + FVG"]
-        else:
-            checklist = ["🚫 Stand aside completely", "💰 Preserve capital", "📚 Use time for journaling and review", "🧘 Prepare for the next trading day"]
-        for item in checklist:
-            st.markdown(f'<div class="checklist-item" style="border-left-color: #00d4ff;">{item}</div>', unsafe_allow_html=True)
-
-def display_perfect_trade_idea(plan):
-    st.markdown("## 🎯 The A+ Trade Setup")
-    if plan == "Standard Day Plan":
-        st.markdown("""<div class="checklist-item" style="border-left: 5px solid #4caf50;"><h4 style="margin-top:0; color: #81c784;">Profile A: Standard Day Plan (Reversal/Continuation)</h4><ol><li><strong>Phase I (Pre-Market):</strong> Confirm HTF Bias. Mark the <strong>Previous Day's PM High/Low</strong> and the <strong>London Session High/Low</strong> as your key liquidity levels.</li><li><strong>Phase II (The Tactic):</strong> Focus on the <strong>NY AM Silver Bullet (10-11 AM)</strong>. Your goal is to enter on a continuation of the trend established in London.</li><li><strong>Phase III (The Setup):</strong><ul><li>Wait for the 9:30 AM open to create a small pullback that <strong>sweeps a short-term low</strong> (for longs) or high (for shorts).</li><li>This sweep must respect the major London session high/low.</li></ul></li><li><strong>Phase IV (The Entry):</strong><ul><li>After the sweep, wait for a lower timeframe (1m/5m) <strong>Market Structure Shift (MSS)</strong> with displacement.</li><li>Enter on a retracement into the <strong>Fair Value Gap (FVG)</strong> created during the MSS.</li><li><strong>Stop Loss:</strong> Place below the low (or above the high) that was created by the liquidity sweep.</li></ul></li><li><strong>Phase V (The Target):</strong> Your primary target is the opposing OS4L liquidity level (e.g., the London High or the Previous Day's PM High).</li></ol></div>""", unsafe_allow_html=True)
-    if plan == "News Day Plan":
-        st.markdown("""<div class="checklist-item" style="border-left: 5px solid #ff9800;"><h4 style="margin-top:0; color: #ffb74d;">Profile C: High-Impact News Day Plan (Volatility)</h4><ol><li><strong>Phase I (Pre-News):</strong> Stand aside. Your only task is to mark the <strong>NY Lunch Range High/Low (12:00 PM - 1:30 PM)</strong>. This is the target liquidity.</li><li><strong>Phase II (The Tactic):</strong> Your focus is exclusively on the <strong>NY PM Silver Bullet (2:00 PM - 3:00 PM)</strong> window, immediately following the news release.</li><li><strong>Phase III (The Setup):</strong><ul><li>Wait for the news release to cause a violent spike that <strong>sweeps the liquidity</strong> above the lunch high or below the lunch low.</li></ul></li><li><strong>Phase IV (The Entry):</strong><ul><li>After the sweep, wait for a clear <strong>Market Structure Shift (MSS)</strong> with displacement as price reverses.</li><li>Enter on a retracement into the <strong>Fair Value Gap (FVG)</strong> created by that reversal.</li><li><strong>Stop Loss:</strong> Place just beyond the peak of the volatility spike (the news-driven high or low).</li></ul></li><li><strong>Phase V (The Target):</strong> Your primary target is a significant structural level on the opposite side of the range or a major HTF liquidity pool.</li></ol></div>""", unsafe_allow_html=True)
-    st.markdown("""<div class="checklist-item" style="border-left: 5px solid #64b5f6;"><h4 style="margin-top:0; color: #64b5f6;">Profile B: Trending Day Plan (Continuation)</h4><p style="font-size:0.9rem; margin-top:-10px; color: #b0b0b0;">(This profile is identified manually when price shows extreme one-sided momentum from the open, breaking key levels without hesitation.)</p><ol><li><strong>Phase I (Identify):</strong> Recognize that price is not creating complex manipulations. It is moving efficiently in one direction. **Abandon the deep discount/reversal model.**</li><li><strong>Phase II (The Tactic):</strong> Stalk shallow pullbacks. Your focus is on joining the established momentum.</li><li><strong>Phase III (The Setup):</strong><ul><li>Wait for price to make an impulsive move, then form a brief, tight <strong>consolidation (a "flag").**</li><li>The setup condition is the **aggressive breakout** from this consolidation.</li></ul></li><li><strong>Phase IV (The Entry):</strong><ul><li>As price expands from the consolidation, it will leave a new, small **Fair Value Gap (FVG).**</li><li>Enter on the first shallow pullback into this immediate FVG.</li><li><strong>Stop Loss:</strong> Place just below the low of the small consolidation range.</li></ul></li><li><strong>Phase V (The Target):</strong> Targets are often based on measured legs of expansion or distant HTF liquidity levels.</li></ol></div>""", unsafe_allow_html=True)
-    if plan == "No Trade Day":
-        st.markdown("""<div class="checklist-item" style="border-left: 5px solid #f44336;"><h4 style="margin-top:0; color: #ff6b6b;">📴 No Trade Day</h4><p>Today's risk environment is not conducive to high-probability trading due to Tier-1 afternoon events. The primary objective is capital preservation.</p><ul><li><strong>Observe:</strong> Watch the market's reaction to news for educational purposes.</li><li><strong>Analyze:</strong> Use the time for backtesting or reviewing past trades.</li><li><strong>Prepare:</strong> Plan your strategy for the next trading day.</li></ul></div>""", unsafe_allow_html=True)
-
-def display_timeline_events(events, title):
-    if not events: return
-    st.markdown(f"### {title}")
-    sorted_events = sorted([e for e in events if e['raw_time']], key=lambda x: x['raw_time'])
-    sorted_events.extend([e for e in events if not e['raw_time']])
-    for event in sorted_events:
-        impact_class = "event-high" if "High" in event['impact'] else ("event-medium" if "Medium" in event['impact'] else "event-low")
-        emoji = "🔴" if "High" in event['impact'] else ("🟠" if "Medium" in event['impact'] else "🟡")
-        currency_display = f"**{event['currency']}**" if event['currency'] == 'USD' else event['currency']
-        st.markdown(f'<div class="event-timeline {impact_class}"><div style="min-width: 80px; font-weight: bold;">{event["time"]}</div><div style="min-width: 30px; text-align: center;">{emoji}</div><div style="min-width: 50px; font-weight: bold;">{currency_display}</div><div style="flex: 1; margin-left: 10px;">{event["name"]}</div></div>', unsafe_allow_html=True)
+    return plan, reason, morning_events, afternoon_events, all_day_events
 
 def get_current_session(current_time):
     current = current_time.time()
@@ -390,114 +415,412 @@ def get_current_session(current_time):
     elif time(13, 30) <= current < time(16, 0): return "NY Afternoon"
     else: return "Pre-Market"
 
-def display_market_status():
+# --- ENHANCED UI COMPONENTS ---
+
+def display_header_dashboard():
+    """Quick scan header with essential info"""
     current_time = get_current_market_time()
     time_to_open = time_until_market_open()
-    col1, col2, col3 = st.columns(3)
+    session = get_current_session(current_time)
+    
+    st.markdown('<div class="quick-info-grid">', unsafe_allow_html=True)
+    
+    col1, col2, col3, col4 = st.columns(4)
+    
     with col1:
-        st.markdown(f'<div class="metric-card"><div class="metric-label">Current ET Time</div><div class="metric-value">{current_time.strftime("%I:%M %p")}</div></div>', unsafe_allow_html=True)
+        st.markdown(f'''
+        <div class="info-card">
+            <div class="metric-label">Current ET Time</div>
+            <div class="metric-value">{current_time.strftime("%I:%M %p")}</div>
+        </div>
+        ''', unsafe_allow_html=True)
+    
     with col2:
         if time_to_open.total_seconds() > 0:
             hours, rem = divmod(int(time_to_open.total_seconds()), 3600)
             mins, _ = divmod(rem, 60)
-            display, label = f"{hours}h {mins}m", "Time to Market Open"
+            display = f"{hours}h {mins}m"
+            label = "Time to Open"
         else:
-            display, label = ("OPEN" if current_time.time() < time(16, 0) else "CLOSED"), "Market Status"
-        st.markdown(f'<div class="metric-card"><div class="metric-label">{label}</div><div class="metric-value">{display}</div></div>', unsafe_allow_html=True)
+            display = "OPEN" if current_time.time() < time(16, 0) else "CLOSED"
+            label = "Market Status"
+        
+        st.markdown(f'''
+        <div class="info-card">
+            <div class="metric-label">{label}</div>
+            <div class="metric-value">{display}</div>
+        </div>
+        ''', unsafe_allow_html=True)
+    
     with col3:
-        session = get_current_session(current_time)
-        st.markdown(f'<div class="metric-card"><div class="metric-label">Current Session</div><div class="metric-value">{session}</div></div>', unsafe_allow_html=True)
+        st.markdown(f'''
+        <div class="info-card">
+            <div class="metric-label">Current Session</div>
+            <div class="metric-value">{session}</div>
+        </div>
+        ''', unsafe_allow_html=True)
+    
+    with col4:
+        today = date.today()
+        day_name = today.strftime("%A")
+        st.markdown(f'''
+        <div class="info-card">
+            <div class="metric-label">Trading Day</div>
+            <div class="metric-value">{day_name}</div>
+        </div>
+        ''', unsafe_allow_html=True)
+    
+    st.markdown('</div>', unsafe_allow_html=True)
 
-# --- MAIN APP ---
+def display_risk_management():
+    """Compact risk management display"""
+    st.markdown('<div class="risk-section">', unsafe_allow_html=True)
+    st.markdown("## 🧠 Risk Management")
+    
+    # Initialize session state
+    if 'standard_risk' not in st.session_state: st.session_state.standard_risk = 300
+    if 'current_balance' not in st.session_state: st.session_state.current_balance = 2800
+    if 'streak' not in st.session_state: st.session_state.streak = 5
+    if 'eval_target' not in st.session_state: st.session_state.eval_target = 6000
+    
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        st.session_state.current_balance = st.number_input("Current Profit ($)", value=st.session_state.current_balance, step=50)
+    with col2:
+        st.session_state.streak = st.number_input("Win/Loss Streak", value=st.session_state.streak, step=1)
+    with col3:
+        st.session_state.standard_risk = st.number_input("Standard Risk ($)", value=st.session_state.standard_risk, step=10)
+    
+    # Risk calculation logic
+    profit_loss = st.session_state.current_balance
+    is_in_profit = profit_loss > 0
+    
+    if not is_in_profit:
+        suggested_risk = st.session_state.standard_risk / 2
+        reason = "Account in drawdown. Use Minimum Risk."
+        risk_class = "risk-minimum"
+    elif st.session_state.streak < 0:
+        suggested_risk = st.session_state.standard_risk / 2
+        reason = f"{abs(st.session_state.streak)}-trade losing streak. Minimum Risk."
+        risk_class = "risk-minimum"
+    elif st.session_state.streak >= WIN_STREAK_THRESHOLD:
+        suggested_risk = st.session_state.standard_risk / 2
+        reason = f"{st.session_state.streak}-win streak. Defensive Risk."
+        risk_class = "risk-defensive"
+    elif profit_loss >= st.session_state.eval_target:
+        suggested_risk = 0
+        reason = "Target reached! Stop trading."
+        risk_class = "risk-passed"
+    else:
+        suggested_risk = st.session_state.standard_risk
+        reason = "Standard operating conditions."
+        risk_class = "risk-normal"
+    
+    st.markdown(f'''
+    <div class="risk-output {risk_class}">
+        <strong>Next Trade Risk: ${int(suggested_risk)}</strong><br>
+        <small>{reason}</small>
+    </div>
+    ''', unsafe_allow_html=True)
+    
+    st.markdown('</div>', unsafe_allow_html=True)
+
+def display_main_plan_card(plan, reason):
+    """Large, prominent plan display"""
+    if plan == "No Trade Day": 
+        card_class, icon, title = "no-trade", "🚫", "NO TRADE DAY"
+    elif plan == "News Day Plan": 
+        card_class, icon, title = "news-day", "📰", "NEWS DAY PLAN"
+    else: 
+        card_class, icon, title = "standard-day", "✅", "STANDARD DAY PLAN"
+    
+    st.markdown(f'''
+    <div class="main-plan-card {card_class}">
+        <h1 style="font-size: 2.5rem; margin: 0;">{icon}</h1>
+        <h1 style="margin: 0.5rem 0;">{title}</h1>
+        <p style="font-size: 1.2rem; margin: 1rem 0 0 0; opacity: 0.9;">{reason}</p>
+    </div>
+    ''', unsafe_allow_html=True)
+
+def display_compact_events(morning_events, afternoon_events, all_day_events):
+    """Streamlined event display"""
+    if not any([morning_events, afternoon_events, all_day_events]):
+        st.info("📅 No economic events scheduled for today.")
+        return
+    
+    tabs = st.tabs(["🌅 Morning", "🌇 Afternoon", "📅 All Day"] if all_day_events else ["🌅 Morning", "🌇 Afternoon"])
+    
+    with tabs[0]:  # Morning
+        if morning_events:
+            for event in sorted([e for e in morning_events if e['raw_time']], key=lambda x: x['raw_time']):
+                impact_class = "event-high" if "High" in event['impact'] else ("event-medium" if "Medium" in event['impact'] else "event-low")
+                currency_class = "usd" if event['currency'] == 'USD' else ""
+                
+                st.markdown(f'''
+                <div class="event-compact {impact_class}">
+                    <div class="event-time">{event["time"]}</div>
+                    <div class="event-currency {currency_class}">{event["currency"]}</div>
+                    <div style="flex: 1; margin-left: 15px;">{event["name"]}</div>
+                </div>
+                ''', unsafe_allow_html=True)
+        else:
+            st.markdown("*No morning events*")
+    
+    with tabs[1]:  # Afternoon
+        if afternoon_events:
+            for event in sorted([e for e in afternoon_events if e['raw_time']], key=lambda x: x['raw_time']):
+                impact_class = "event-high" if "High" in event['impact'] else ("event-medium" if "Medium" in event['impact'] else "event-low")
+                currency_class = "usd" if event['currency'] == 'USD' else ""
+                
+                st.markdown(f'''
+                <div class="event-compact {impact_class}">
+                    <div class="event-time">{event["time"]}</div>
+                    <div class="event-currency {currency_class}">{event["currency"]}</div>
+                    <div style="flex: 1; margin-left: 15px;">{event["name"]}</div>
+                </div>
+                ''', unsafe_allow_html=True)
+        else:
+            st.markdown("*No afternoon events*")
+    
+    if all_day_events and len(tabs) > 2:
+        with tabs[2]:  # All Day
+            for event in all_day_events:
+                impact_class = "event-high" if "High" in event['impact'] else ("event-medium" if "Medium" in event['impact'] else "event-low")
+                currency_class = "usd" if event['currency'] == 'USD' else ""
+                
+                st.markdown(f'''
+                <div class="event-compact {impact_class}">
+                    <div class="event-time">All Day</div>
+                    <div class="event-currency {currency_class}">{event["currency"]}</div>
+                    <div style="flex: 1; margin-left: 15px;">{event["name"]}</div>
+                </div>
+                ''', unsafe_allow_html=True)
+
+def display_action_checklist(plan):
+    """Quick-scan action items"""
+    st.markdown('<div class="action-section">', unsafe_allow_html=True)
+    st.markdown("### 🎯 Action Items")
+    
+    if plan == "News Day Plan":
+        actions = [
+            ("🚫", "DO NOT trade the morning session"),
+            ("📊", "Mark NY Lunch Range (12:00 PM - 1:30 PM)"),
+            ("👀", "Wait for liquidity raid after news"),
+            ("🎯", "Prime entry: 2:00 PM - 3:00 PM"),
+            ("✅", "Enter on MSS + FVG confirmation")
+        ]
+    elif plan == "Standard Day Plan":
+        actions = [
+            ("📈", "Mark Previous Day PM Range"),
+            ("🌍", "Mark London Session Range"),
+            ("👀", "Watch NY Open Judas Swing (9:30-10:30)"),
+            ("🎯", "Prime entry: 10:00 AM - 11:00 AM"),
+            ("✅", "Enter after sweep with MSS + FVG")
+        ]
+    else:
+        actions = [
+            ("🚫", "Stand aside completely"),
+            ("💰", "Preserve capital"),
+            ("📚", "Journal and review"),
+            ("🧘", "Prepare for next trading day")
+        ]
+    
+    for emoji, text in actions:
+        st.markdown(f'''
+        <div class="action-item">
+            <div class="action-emoji">{emoji}</div>
+            <div>{text}</div>
+        </div>
+        ''', unsafe_allow_html=True)
+    
+    st.markdown('</div>', unsafe_allow_html=True)
+
+def display_friday_alert(plan):
+    """T.G.I.F. setup alert for Fridays"""
+    if date.today().weekday() != 4:  # Only show on Fridays
+        return
+        
+    with st.expander("🎯 T.G.I.F. Setup Alert", expanded=False):
+        st.info("Friday T.G.I.F. Setup might be in play - retracement back into weekly range.")
+        
+        st.markdown("**Pre-conditions:**")
+        st.markdown("✓ Strong weekly trend established")
+        st.markdown("✓ Higher timeframe level hit (premium/discount array)")
+        
+        if plan == "Standard Day Plan":
+            st.success("**Perfect alignment:** Watch for morning Judas swing peak (9:30-10:30 AM) then target 20-30% weekly retracement.")
+        elif plan == "News Day Plan":
+            st.warning("**Adjusted timing:** Look for afternoon peak formation (1:30-2:00 PM) after news releases.")
+        else:
+            st.error("**Observe only:** No trading today due to high-risk environment.")
+
+# --- MAIN APPLICATION ---
 def main():
-    st.title("📈 US Index Trading Plan ($NQ, $ES)")
+    st.title("📈 US Index Trading Plan")
     
-    # --- CALL THE NEW MODULES HERE ---
-    display_market_status()
-    display_risk_management_module() # <-- NEW MODULE PLACED HERE
-
-    st.markdown("---") # Visual Separator
+    # Header dashboard
+    display_header_dashboard()
     
-    if st.button("🔄 Fetch & Update Live Economic Data", type="primary", help="Runs the scraper and updates the database with the latest events."):
-        with st.spinner("🚀 Running scraper... please wait."):
+    # Data fetch button
+    if st.button("🔄 Fetch Live Data", type="primary"):
+        with st.spinner("Fetching data..."):
             try:
                 result = subprocess.run([sys.executable, "ffscraper.py"], capture_output=True, check=True, text=True)
-                st.success("✅ Scraper completed successfully!")
-                with st.expander("📋 Scraper Log"):
-                    st.code(result.stdout)
-                with st.spinner("💾 Updating database..."):
-                    upserted, modified = update_db_from_csv(SCRAPED_DATA_PATH)
-                    st.success(f"Database updated! ✨ {upserted} new events added, {modified} existing events updated.")
+                upserted, modified = update_db_from_csv(SCRAPED_DATA_PATH)
+                st.success(f"✅ Updated! {upserted} new, {modified} modified")
                 st.cache_data.clear()
                 st.rerun()
-            except FileNotFoundError:
-                 st.error("❌ Scraper script 'ffscraper.py' not found. Make sure it's in the same directory.")
-            except subprocess.CalledProcessError as e:
-                st.error("❌ Scraper failed to execute.")
-                st.code(f"Error: {e.stderr}")
             except Exception as e:
-                st.error(f"❌ An unexpected error occurred: {e}")
+                st.error(f"❌ Update failed: {str(e)}")
     
-    col1, col2 = st.columns([2, 2])
+    # Date selection
+    col1, col2 = st.columns([3, 1])
     with col1:
         selected_date = st.date_input("📅 Analysis Date", value=date.today())
     with col2:
-        st.write("")
-        st.write("")
-        view_option = st.radio("View Options", ["Today", "Week"], horizontal=True, label_visibility="collapsed")
+        view_mode = st.selectbox("View", ["Today", "Week"], index=0)
     
     st.markdown("---")
     
+    # Weekend check
     if selected_date.weekday() >= 5:
-        st.markdown('<div class="main-plan-card no-trade"><h1>📴 MARKET CLOSED</h1><p style="font-size: 1.1rem; margin-top: 1rem;">US indices do not trade on weekends. 📚 Use this time to journal, review trades, or recharge.</p></div>', unsafe_allow_html=True)
+        st.markdown('''
+        <div class="weekend-notice">
+            <h1>📴 MARKET CLOSED</h1>
+            <p style="font-size: 1.2rem; margin-top: 1rem;">
+                US indices do not trade on weekends.<br>
+                📚 Use this time to journal, review trades, or recharge.
+            </p>
+        </div>
+        ''', unsafe_allow_html=True)
         return
-
-    df = get_events_from_db()
     
+    # Get data
+    df = get_events_from_db()
     if df.empty:
-        st.warning("👋 No economic data found. Click the **Fetch & Update** button above to load data.")
+        st.warning("👋 No economic data found. Click **Fetch Live Data** to load current events.")
         return
-
+    
     records = df.to_dict('records')
-
+    
     def get_events_for(d): 
         return [row for row in records if parse_date(row.get('date', '')) == d]
-
-    if view_option == "Today":
+    
+    if view_mode == "Today":
+        # Risk Management
+        display_risk_management()
+        
+        # Get today's events and plan
         events = get_events_for(selected_date)
         if not events:
             plan, reason = "Standard Day Plan", "No economic events found. Proceed with Standard Day Plan."
             morning, afternoon, allday = [], [], []
         else:
             plan, reason, morning, afternoon, allday = analyze_day_events(selected_date, events)
-
-        display_plan_card(plan, reason)
-        if selected_date.weekday() == 4:
-            display_tgif_alert(plan)
-        display_action_checklist(plan)
-        display_perfect_trade_idea(plan)
         
-        st.markdown("---")
-        st.markdown("## 🕒 Today's Event Timeline")
-        c1, c2 = st.columns(2)
-        with c1: display_timeline_events(morning, "🌅 Morning Events (Before 12 PM ET)")
-        with c2: display_timeline_events(afternoon, "🌇 Afternoon Events (After 12 PM ET)")
-        if allday: display_timeline_events(allday, "📅 All-Day Events")
-    else:
-        st.markdown("## 🗓 Weekly Outlook")
+        # Main plan display
+        display_main_plan_card(plan, reason)
+        
+        # Friday T.G.I.F. alert
+        display_friday_alert(plan)
+        
+        # Two column layout for actions and events
+        col1, col2 = st.columns([1, 1])
+        
+        with col1:
+            display_action_checklist(plan)
+        
+        with col2:
+            st.markdown("### 📅 Today's Events")
+            display_compact_events(morning, afternoon, allday)
+        
+        # Trade setup details in expandable section
+        with st.expander("🎯 Detailed Trade Setups", expanded=False):
+            if plan == "Standard Day Plan":
+                st.markdown("""
+                #### ✅ Standard Day Setup
+                **Phase I:** Mark Previous Day PM High/Low + London Session Range
+                
+                **Phase II:** NY AM Silver Bullet (10-11 AM)
+                
+                **Phase III:** Watch for 9:30 AM sweep of short-term level
+                
+                **Phase IV:** Enter on MSS + FVG after sweep
+                
+                **Phase V:** Target opposing liquidity level
+                """)
+            
+            elif plan == "News Day Plan":
+                st.markdown("""
+                #### 📰 News Day Setup  
+                **Phase I:** Mark NY Lunch Range (12:00-1:30 PM)
+                
+                **Phase II:** NY PM Silver Bullet (2:00-3:00 PM) 
+                
+                **Phase III:** Wait for news-driven liquidity sweep
+                
+                **Phase IV:** Enter on MSS + FVG after news reversal
+                
+                **Phase V:** Target structural levels opposite the spike
+                """)
+            
+            else:
+                st.markdown("""
+                #### 🚫 No Trade Day
+                **Capital Preservation Mode**
+                - Stand aside completely
+                - Observe for educational purposes
+                - Use time for analysis and preparation
+                """)
+    
+    else:  # Week view
+        st.markdown("## 🗓 Weekly Trading Outlook")
+        
         start_of_week = selected_date - timedelta(days=selected_date.weekday())
+        
         for i in range(5):
             d = start_of_week + timedelta(days=i)
             events_for_day = get_events_for(d)
-            with st.expander(f"**{d.strftime('%A, %b %d')}**", expanded=(d == selected_date)):
-                if not events_for_day:
-                    plan, reason = "Standard Day Plan", "No economic events found. Proceed with Standard Day Plan."
-                else:
-                    plan, reason, *_ = analyze_day_events(d, events_for_day)
-                if plan == "No Trade Day": card_class, icon = "no-trade", "🚫"
-                elif plan == "News Day Plan": card_class, icon = "news-day", "📰"
-                else: card_class, icon = "standard-day", "✅"
-                st.markdown(f'<div class="main-plan-card {card_class}" style="margin: 0.5rem 0; padding: 1rem;"><h3 style="margin:0;">{icon} {plan}</h3><p style="margin-bottom:0;">{reason}</p></div>', unsafe_allow_html=True)
+            
+            # Determine plan for the day
+            if not events_for_day:
+                plan, reason = "Standard Day Plan", "No economic events."
+            else:
+                plan, reason, *_ = analyze_day_events(d, events_for_day)
+            
+            # Plan styling
+            if plan == "No Trade Day": 
+                card_class, icon = "no-trade", "🚫"
+            elif plan == "News Day Plan": 
+                card_class, icon = "news-day", "📰"
+            else: 
+                card_class, icon = "standard-day", "✅"
+            
+            # Day card
+            is_today = d == date.today()
+            border_style = "border: 3px solid #3b82f6;" if is_today else ""
+            
+            st.markdown(f'''
+            <div class="main-plan-card {card_class}" style="grid-column: span 1; padding: 1rem; margin: 0.5rem 0; {border_style}">
+                <h3 style="margin: 0;">{icon} {d.strftime('%A, %b %d')}</h3>
+                <h4 style="margin: 0.5rem 0;">{plan}</h4>
+                <p style="margin: 0.5rem 0 0 0; font-size: 0.9rem;">{reason}</p>
+                {"<small style='color: #3b82f6; font-weight: bold;'>← TODAY</small>" if is_today else ""}
+            </div>
+            ''', unsafe_allow_html=True)
+            
+            # Show key events for the day
+            if events_for_day:
+                high_impact_usd = [e for e in events_for_day if e.get('currency', '').upper() == 'USD' and 
+                                 (parse_impact(e.get('impact', '')) == 'High' or 
+                                  any(keyword.lower() in e.get('event', '').lower() for keyword in FORCED_HIGH_IMPACT_KEYWORDS))]
+                
+                if high_impact_usd:
+                    with st.expander(f"Key Events - {d.strftime('%A')}", expanded=False):
+                        for event in high_impact_usd[:3]:  # Show top 3
+                            event_time = parse_time(event.get('time', ''))
+                            time_display = event_time.strftime('%I:%M %p') if event_time else 'All Day'
+                            st.markdown(f"🔴 **{time_display}** - {event.get('event', '')}")
 
 if __name__ == "__main__":
     main()
