@@ -32,7 +32,6 @@ WIN_STREAK_THRESHOLD = 5
 # --- ENHANCED CSS STYLES ---
 st.markdown("""
 <style>
-    /* Paste your existing CSS styles here */
     .stApp { background: linear-gradient(135deg, #0f1419 0%, #1a1f2e 100%); }
     .trading-dashboard { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-bottom: 30px; }
     .main-plan-card { grid-column: span 2; padding: 2rem; border-radius: 16px; text-align: center; margin: 1rem 0; border: 4px solid; box-shadow: 0 8px 32px rgba(0,0,0,0.4); backdrop-filter: blur(20px); position: relative; overflow: hidden; }
@@ -78,13 +77,13 @@ st.markdown("""
     .pill-ok { background: rgba(16,185,129,.15); border:1px solid rgba(16,185,129,.4); color:#a7f3d0; }
     .pill-warn { background: rgba(245,158,11,.15); border:1px solid rgba(245,158,11,.4); color:#fde68a; }
     .pill-bad { background: rgba(239,68,68,.15); border:1px solid rgba(239,68,68,.4); color:#fecaca; }
+    .week-day-card { background: rgba(255, 255, 255, 0.05); border: 1px solid rgba(255, 255, 255, 0.1); border-radius: 12px; padding: 1rem; margin: 0.5rem 0; }
 </style>
 """, unsafe_allow_html=True)
 
 # --- DATABASE AND UTILITY FUNCTIONS ---
 @st.cache_resource
 def init_connection():
-    # ... your existing function ...
     try:
         connection_string = st.secrets["mongo"]["connection_string"]
         client = pymongo.MongoClient(connection_string)
@@ -95,7 +94,6 @@ def init_connection():
 
 @st.cache_data(ttl=600)
 def get_events_from_db():
-    # ... your existing function ...
     client = init_connection()
     if client is None:
         return pd.DataFrame()
@@ -108,7 +106,6 @@ def get_events_from_db():
     return pd.DataFrame(items)
 
 def update_db_from_csv(file_path):
-    # ... your existing function ...
     client = init_connection()
     if client is None:
         return 0, 0
@@ -138,12 +135,10 @@ def update_db_from_csv(file_path):
 
 # --- TIME/DATE HELPERS ---
 def get_current_market_time():
-    # ... your existing function ...
     et = pytz.timezone('US/Eastern')
     return datetime.now(et)
 
 def time_until_market_open():
-    # ... your existing function ...
     et = pytz.timezone('US/Eastern')
     now = datetime.now(et)
     market_open = now.replace(hour=9, minute=30, second=0, microsecond=0)
@@ -154,7 +149,6 @@ def time_until_market_open():
     return market_open - now
 
 def parse_time(time_str):
-    # ... your existing function ...
     if not time_str or pd.isna(time_str) or str(time_str).lower() in ['empty', '']:
         return None
     for fmt in ('%I:%M%p', '%I:%M %p', '%H:%M'):
@@ -165,14 +159,12 @@ def parse_time(time_str):
     return None
 
 def parse_date(date_str):
-    # ... your existing function ...
     try:
         return datetime.strptime(str(date_str).strip(), '%d/%m/%Y').date()
     except (ValueError, TypeError):
         return None
 
 def parse_impact(impact_str):
-    # ... your existing function ...
     if not impact_str or pd.isna(impact_str):
         return "Low"
     lower = str(impact_str).lower()
@@ -185,7 +177,7 @@ def parse_impact(impact_str):
     return "Low"
 
 # =======================================================
-# --- NEW: SEASONALITY ANALYSIS MODULE (INTEGRATED) ---
+# --- SEASONALITY ANALYSIS MODULE ---
 # =======================================================
 
 @st.cache_data(ttl=3600)  # Cache the results for 1 hour to avoid re-fetching
@@ -282,13 +274,8 @@ def get_seasonal_bias_label(avg_return: float, percent_positive: float, std_dev:
     else:
         return "Neutral / Inconclusive"
 
-# =======================================================
-# --- END SEASONALITY MODULE ---
-# =======================================================
-
 # --- CALENDAR ANALYSIS ---
 def analyze_day_events(target_date, events):
-    # ... your existing function ...
     plan = "Standard Day Plan"
     reason = "No high-impact USD news found. Proceed with the Standard Day Plan and your directional bias."
     has_high_impact_usd_event = False
@@ -337,7 +324,6 @@ def analyze_day_events(target_date, events):
 
 # --- SESSION HELPER ---
 def get_current_session(current_time):
-    # ... your existing function ...
     current = current_time.time()
     if time(2, 0) <= current < time(5, 0):
         return "London"
@@ -352,7 +338,6 @@ def get_current_session(current_time):
 
 # --- UI COMPONENTS ---
 def display_header_dashboard():
-    # ... your existing function ...
     current_time = get_current_market_time()
     time_to_open = time_until_market_open()
     session = get_current_session(current_time)
@@ -407,7 +392,6 @@ def display_header_dashboard():
 
 
 def display_risk_management():
-    # ... your existing function ...
     st.markdown('<div class="risk-section">', unsafe_allow_html=True)
     st.markdown("## 🧠 Risk Management")
 
@@ -458,7 +442,6 @@ def display_risk_management():
     st.markdown('</div>', unsafe_allow_html=True)
 
 def display_main_plan_card(plan, reason):
-    # ... your existing function ...
     if plan == "No Trade Day":
         card_class, icon, title = "no-trade", "🚫", "NO TRADE DAY"
     elif plan == "News Day Plan":
@@ -475,7 +458,6 @@ def display_main_plan_card(plan, reason):
     ''', unsafe_allow_html=True)
 
 def display_compact_events(morning_events, afternoon_events, all_day_events):
-    # ... your existing function ...
     if not any([morning_events, afternoon_events, all_day_events]):
         st.info("📅 No economic events scheduled for today.")
         return
@@ -526,7 +508,6 @@ def display_compact_events(morning_events, afternoon_events, all_day_events):
                 ''', unsafe_allow_html=True)
 
 def display_action_checklist(plan):
-    # ... your existing function ...
     st.markdown('<div class="action-section">', unsafe_allow_html=True)
     st.markdown("### 🎯 Action Items")
 
@@ -565,7 +546,6 @@ def display_action_checklist(plan):
     st.markdown('</div>', unsafe_allow_html=True)
 
 def display_friday_alert(plan):
-    # ... your existing function ...
     if date.today().weekday() != 4:
         return
     with st.expander("🎯 T.G.I.F. Setup Alert", expanded=False):
@@ -580,7 +560,6 @@ def display_friday_alert(plan):
         else:
             st.error("**Observe only:** No trading today due to high-risk environment.")
 
-# --- NEW: SEASONALITY UI COMPONENT ---
 def display_seasonality_analysis(symbol, target_date):
     st.markdown("### 🗓️ Weekly Seasonal Bias")
 
@@ -599,14 +578,109 @@ def display_seasonality_analysis(symbol, target_date):
     else:
         st.info(f"Could not retrieve seasonal data for {symbol}. This may happen for weeks with no trading data.")
 
-def compute_allocation(*args, **kwargs):
-    # ... your existing function ...
-    pass
+def display_week_view(selected_date, records):
+    """Display week view with daily summaries"""
+    st.markdown("### 📅 Week Overview")
+    
+    # Calculate the start of the week (Monday)
+    start_of_week = selected_date - timedelta(days=selected_date.weekday())
+    week_days = [start_of_week + timedelta(days=i) for i in range(7)]
+    
+    for day in week_days:
+        if day.weekday() >= 5:  # Skip weekends
+            continue
+            
+        day_events = [row for row in records if parse_date(row.get('date', '')) == day]
+        
+        if day_events:
+            plan, reason, morning, afternoon, allday = analyze_day_events(day, day_events)
+        else:
+            plan = "Standard Day Plan"
+            reason = "No economic events scheduled"
+            morning, afternoon, allday = [], [], []
+        
+        # Determine card styling
+        if plan == "No Trade Day":
+            card_style = "border-left: 4px solid #f44336; background: rgba(244, 67, 54, 0.1);"
+            plan_emoji = "🚫"
+        elif plan == "News Day Plan":
+            card_style = "border-left: 4px solid #ff9800; background: rgba(255, 152, 0, 0.1);"
+            plan_emoji = "📰"
+        else:
+            card_style = "border-left: 4px solid #4caf50; background: rgba(76, 175, 80, 0.1);"
+            plan_emoji = "✅"
+        
+        st.markdown(f'''
+        <div class="week-day-card" style="{card_style}">
+            <h4>{plan_emoji} {day.strftime("%A, %B %d")} - {plan}</h4>
+            <p style="margin: 0.5rem 0; font-size: 0.9rem; opacity: 0.8;">{reason}</p>
+        </div>
+        ''', unsafe_allow_html=True)
+        
+        # Show key events for the day
+        if day_events:
+            high_impact_events = [e for e in day_events if parse_impact(e.get('impact', '')) == 'High' or 
+                                any(keyword.lower() in e.get('event', '').lower() for keyword in FORCED_HIGH_IMPACT_KEYWORDS)]
+            if high_impact_events:
+                with st.expander(f"High Impact Events ({len(high_impact_events)})", expanded=False):
+                    for event in high_impact_events:
+                        event_time = parse_time(event.get('time', ''))
+                        time_str = event_time.strftime('%I:%M %p') if event_time else 'All Day'
+                        st.markdown(f"• **{time_str}** - {event.get('currency', '')} - {event.get('event', '')}")
 
-def payout_and_growth_ui():
-    # ... your existing function ...
-    pass
-
+def display_payout_planner():
+    """Display payout planning section"""
+    st.markdown("### 💰 Payout Planner")
+    
+    if 'payout_balance' not in st.session_state: 
+        st.session_state.payout_balance = 10000
+    if 'payout_target' not in st.session_state: 
+        st.session_state.payout_target = 15000
+    if 'monthly_payout' not in st.session_state: 
+        st.session_state.monthly_payout = 2000
+    
+    col1, col2, col3 = st.columns(3)
+    
+    with col1:
+        st.session_state.payout_balance = st.number_input(
+            "Current Balance ($)", 
+            value=st.session_state.payout_balance, 
+            step=100
+        )
+    
+    with col2:
+        st.session_state.payout_target = st.number_input(
+            "Next Payout Target ($)", 
+            value=st.session_state.payout_target, 
+            step=500
+        )
+    
+    with col3:
+        st.session_state.monthly_payout = st.number_input(
+            "Monthly Payout Goal ($)", 
+            value=st.session_state.monthly_payout, 
+            step=100
+        )
+    
+    # Calculate metrics
+    remaining = st.session_state.payout_target - st.session_state.payout_balance
+    progress_pct = (st.session_state.payout_balance / st.session_state.payout_target) * 100
+    
+    # Display progress
+    st.progress(min(progress_pct / 100, 1.0))
+    
+    col1, col2, col3 = st.columns(3)
+    
+    with col1:
+        st.metric("Remaining to Target", f"${remaining:,.0f}")
+    
+    with col2:
+        st.metric("Progress", f"{progress_pct:.1f}%")
+    
+    with col3:
+        days_in_month = 22  # Trading days
+        daily_target = st.session_state.monthly_payout / days_in_month
+        st.metric("Daily Target", f"${daily_target:.0f}")
 
 # --- MAIN APPLICATION ---
 def main():
@@ -635,8 +709,16 @@ def main():
 
     st.markdown("---")
 
+    # Check for weekend
     if selected_date.weekday() >= 5:
-        st.markdown('''...''') # Weekend notice
+        st.markdown('''
+        <div class="weekend-notice">
+            <h2>🏖️ Weekend Mode</h2>
+            <p>Markets are closed. Time to relax, review your trades, and prepare for the upcoming week!</p>
+            <p><strong>Weekend Tasks:</strong></p>
+            <p>📊 Review weekly performance • 📚 Study market structure • 🧘 Mental reset</p>
+        </div>
+        ''', unsafe_allow_html=True)
         return
 
     df = get_events_from_db()
@@ -668,14 +750,20 @@ def main():
             st.markdown("### 📅 Today's Events")
             display_compact_events(morning, afternoon, allday)
 
-        # --- SEASONALITY MODULE ADDED HERE ---
+        # Seasonality Analysis
         st.markdown("---")
         display_seasonality_analysis('QQQ', selected_date)
-        # -------------------------------------
 
         if show_payout:
-            # Payout logic will go here if you re-add it
-            pass
+            st.markdown("---")
+            display_payout_planner()
 
     else:  # Week view
-        # ... your existing week view lo
+        display_week_view(selected_date, records)
+        
+        if show_payout:
+            st.markdown("---")
+            display_payout_planner()
+
+if __name__ == "__main__":
+    main()
