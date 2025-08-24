@@ -1,7 +1,7 @@
 streamlit
 selenium
 pandas
-yfinance as yf
+yfinance
 pytz
 webdriver-manager
 requests
