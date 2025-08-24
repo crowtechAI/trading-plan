@@ -34,19 +34,19 @@ st.markdown("""
 <style>
     .stApp { background: linear-gradient(135deg, #0f1419 0%, #1a1f2e 100%); }
     .trading-dashboard { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-bottom: 30px; }
-    .main-plan-card { grid-column: span 2; padding: 2rem; border-radius: 16px; text-align: center; margin: 1rem 0; border: 4px solid; box-shadow: 0 8px 32px rgba(0,0,0,0.4); backdrop-filter: blur(20px); position: relative; overflow: hidden; }
+    .main-plan-card { grid-column: span 2; padding: 1rem; border-radius: 12px; text-align: center; margin: 0.5rem 0; border: 2px solid; box-shadow: 0 4px 16px rgba(0,0,0,0.3); backdrop-filter: blur(10px); position: relative; overflow: hidden; }
     .main-plan-card::before { content: ''; position: absolute; top: 0; left: -100%; width: 100%; height: 100%; background: linear-gradient(90deg, transparent, rgba(255,255,255,0.1), transparent); transition: left 0.5s; }
     .main-plan-card:hover::before { left: 100%; }
-    .no-trade { background: linear-gradient(135deg, rgba(244, 67, 54, 0.2), rgba(183, 28, 28, 0.1)); border-color: #f44336; color: #ffcdd2; }
-    .news-day { background: linear-gradient(135deg, rgba(255, 152, 0, 0.2), rgba(239, 108, 0, 0.1)); border-color: #ff9800; color: #ffcc02; }
-    .standard-day { background: linear-gradient(135deg, rgba(76, 175, 80, 0.2), rgba(56, 142, 60, 0.1)); border-color: #4caf50; color: #a5d6a7; }
+    .no-trade { background: linear-gradient(135deg, rgba(244, 67, 54, 0.15), rgba(183, 28, 28, 0.08)); border-color: #f44336; color: #ffcdd2; }
+    .news-day { background: linear-gradient(135deg, rgba(255, 152, 0, 0.15), rgba(239, 108, 0, 0.08)); border-color: #ff9800; color: #ffcc02; }
+    .standard-day { background: linear-gradient(135deg, rgba(76, 175, 80, 0.15), rgba(56, 142, 60, 0.08)); border-color: #4caf50; color: #a5d6a7; }
     .quick-info-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 15px; margin: 20px 0; }
     .info-card { background: rgba(255, 255, 255, 0.05); border: 1px solid rgba(255, 255, 255, 0.1); border-radius: 12px; padding: 1rem; text-align: center; backdrop-filter: blur(10px); transition: all 0.3s ease; box-shadow: 0 4px 15px rgba(0,0,0,0.2); }
     .info-card:hover { transform: translateY(-5px); box-shadow: 0 8px 25px rgba(0,0,0,0.3); border-color: rgba(255, 255, 255, 0.2); }
     .info-card .metric-label { color: #94a3b8; font-size: 0.85rem; font-weight: 500; margin-bottom: 8px; }
     .info-card .metric-value { color: #ffffff; font-size: 1.4rem; font-weight: 700; text-shadow: 0 2px 4px rgba(0,0,0,0.3); }
-    .risk-section { background: linear-gradient(135deg, rgba(30, 41, 59, 0.8), rgba(15, 23, 42, 0.6)); border: 2px solid rgba(59, 130, 246, 0.3); border-radius: 16px; padding: 1.5rem; margin: 20px 0; box-shadow: 0 8px 32px rgba(59, 130, 246, 0.1); }
-    .risk-output { padding: 1.2rem; border-radius: 12px; text-align: center; color: white; font-weight: bold; font-size: 1.3rem; margin: 15px 0; box-shadow: 0 4px 15px rgba(0,0,0,0.3); transition: all 0.3s ease; }
+    .risk-section { background: linear-gradient(135deg, rgba(30, 41, 59, 0.6), rgba(15, 23, 42, 0.4)); border: 1px solid rgba(59, 130, 246, 0.2); border-radius: 12px; padding: 1rem; margin: 15px 0; box-shadow: 0 4px 16px rgba(59, 130, 246, 0.08); }
+    .risk-output { padding: 0.8rem; border-radius: 8px; text-align: center; color: white; font-weight: bold; font-size: 1.1rem; margin: 10px 0; box-shadow: 0 2px 8px rgba(0,0,0,0.2); transition: all 0.3s ease; }
     .risk-output:hover { transform: scale(1.02); }
     .risk-normal { background: linear-gradient(135deg, #3182CE, #2c5aa0); }
     .risk-defensive { background: linear-gradient(135deg, #DD6B20, #c05621); }
@@ -402,11 +402,11 @@ def display_risk_management():
 
     col1, col2, col3 = st.columns(3)
     with col1:
-        st.session_state.current_balance = st.number_input("Current Profit ($)", value=st.session_state.current_balance, step=50)
+        st.session_state.current_balance = st.number_input("Current Profit ($)", value=st.session_state.current_balance, step=50, key="risk_balance")
     with col2:
-        st.session_state.streak = st.number_input("Win/Loss Streak", value=st.session_state.streak, step=1)
+        st.session_state.streak = st.number_input("Win/Loss Streak", value=st.session_state.streak, step=1, key="risk_streak")
     with col3:
-        st.session_state.standard_risk = st.number_input("Standard Risk ($)", value=st.session_state.standard_risk, step=10)
+        st.session_state.standard_risk = st.number_input("Standard Risk ($)", value=st.session_state.standard_risk, step=10, key="risk_standard")
 
     profit_loss = st.session_state.current_balance
     is_in_profit = profit_loss > 0
@@ -451,9 +451,9 @@ def display_main_plan_card(plan, reason):
 
     st.markdown(f'''
     <div class="main-plan-card {card_class}">
-        <h1 style="font-size: 2.5rem; margin: 0;">{icon}</h1>
-        <h1 style="margin: 0.5rem 0;">{title}</h1>
-        <p style="font-size: 1.2rem; margin: 1rem 0 0 0; opacity: 0.9;">{reason}</p>
+        <h1 style="font-size: 1.8rem; margin: 0;">{icon}</h1>
+        <h2 style="margin: 0.3rem 0; font-size: 1.4rem;">{title}</h2>
+        <p style="font-size: 1rem; margin: 0.5rem 0 0 0; opacity: 0.9;">{reason}</p>
     </div>
     ''', unsafe_allow_html=True)
 
@@ -733,6 +733,7 @@ def main():
 
     if view_mode == "Today":
         display_risk_management()
+        
         events = get_events_for(selected_date)
         if not events:
             plan, reason = "Standard Day Plan", "No economic events found. Proceed with Standard Day Plan."
@@ -743,16 +744,16 @@ def main():
         display_main_plan_card(plan, reason)
         display_friday_alert(plan)
 
+        # Seasonality Analysis (moved above events)
+        st.markdown("---")
+        display_seasonality_analysis('QQQ', selected_date)
+
         col1, col2 = st.columns([1, 1])
         with col1:
             display_action_checklist(plan)
         with col2:
             st.markdown("### 📅 Today's Events")
             display_compact_events(morning, afternoon, allday)
-
-        # Seasonality Analysis
-        st.markdown("---")
-        display_seasonality_analysis('QQQ', selected_date)
 
         if show_payout:
             st.markdown("---")
