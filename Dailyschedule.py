@@ -1,13 +1,16 @@
 import streamlit as st
 import pandas as pd
 import yfinance as yf
+import csv
 from datetime import datetime, time, date, timedelta
 import pytz
+import subprocess
+import sys
+import os
 import pymongo
 import requests
 import json
 from openai import OpenAI
-from dateutil.relativedelta import relativedelta # Added for month calculations
 
 # --- CONFIGURATION ---
 st.set_page_config(
@@ -24,16 +27,9 @@ except (KeyError, FileNotFoundError):
     st.error("OpenAI API key not found. Please add it to your Streamlit secrets.", icon="🚨")
     client = None
 
-# Initialize FMP API client
-try:
-    FMP_API_KEY = st.secrets["fmp"]["api_key"]
-except (KeyError, FileNotFoundError):
-    st.error("Financial Modeling Prep (FMP) API key not found. Please add it to secrets.", icon="🚨")
-    FMP_API_KEY = None
-
-
 # --- CONSTANTS ---
 # Trading Plan Constants
+SCRAPED_DATA_PATH = "latest_forex_data.csv"
 PLANNER_DB_NAME = "DailyTradingPlanner"
 PLANNER_COLLECTION_NAME = "economic_events"
 MORNING_CUTOFF = time(12, 0)
@@ -61,7 +57,6 @@ ENDPOINTS = {
 # --- ENHANCED CSS STYLES ---
 st.markdown("""
 <style>
-    /* Your existing CSS styles remain unchanged */
     .stApp { background: linear-gradient(135deg, #0f1419 0%, #1a1f2e 100%); }
     .main-plan-card { grid-column: span 2; padding: 1rem; border-radius: 12px; text-align: center; margin: 0.5rem 0; border: 2px solid; box-shadow: 0 4px 16px rgba(0,0,0,0.3); backdrop-filter: blur(10px); }
     .main-plan-card::before { content: ''; position: absolute; top: 0; left: -100%; width: 100%; height: 100%; background: linear-gradient(90deg, transparent, rgba(255,255,255,0.1), transparent); transition: left 0.6s cubic-bezier(0.4,0,0.2,1); }
@@ -104,6 +99,7 @@ st.markdown("""
     .week-day-card { background: rgba(255, 255, 255, 0.05); border: 1px solid rgba(255, 255, 255, 0.1); border-radius: 12px; padding: 1rem; margin: 0.5rem 0; }
 </style>
 """, unsafe_allow_html=True)
+
 
 # --- DATABASE & UTILITY FUNCTIONS (SHARED) ---
 @st.cache_resource
@@ -148,78 +144,7 @@ def parse_headline_datetime(dt_str):
         except (ValueError, TypeError): continue
     return None
 
-# --- NEW: ECONOMIC CALENDAR API FETCHER ---
-def fetch_and_store_economic_events():
-    """
-    Fetches economic calendar data for the current and next month from FMP API,
-    transforms it, and stores it in MongoDB, solving the end-of-month issue.
-    """
-    if not FMP_API_KEY:
-        st.sidebar.error("FMP API key not configured.")
-        return False
-
-    mongo_client = init_connection()
-    if not mongo_client:
-        st.sidebar.error("MongoDB connection failed.")
-        return False
-
-    # Define date range: from the first day of the current month to the last day of the next month
-    today = date.today()
-    from_date = today.replace(day=1)
-    to_date = today + relativedelta(months=2)
-    to_date = to_date.replace(day=1) - timedelta(days=1)
-
-    url = f"https://financialmodelingprep.com/api/v3/economic_calendar?from={from_date}&to={to_date}&apikey={FMP_API_KEY}"
-
-    try:
-        response = requests.get(url, timeout=15)
-        response.raise_for_status()
-        data = response.json()
-
-        if not data:
-            st.sidebar.warning("API returned no economic events for the period.")
-            return True # Success, but no data
-
-        # Transform data to match the app's expected format
-        et = pytz.timezone('US/Eastern')
-        transformed_events = []
-        for event in data:
-            try:
-                # API provides UTC time, convert to ET
-                event_dt_utc = datetime.fromisoformat(event['date'].replace('Z', '+00:00'))
-                event_dt_et = event_dt_utc.astimezone(et)
-                
-                transformed_events.append({
-                    "date": event_dt_et.strftime("%d/%m/%Y"),
-                    "time": event_dt_et.strftime("%I:%M%p"),
-                    "currency": event.get("currency", "N/A"),
-                    "event": event.get("event", "Unnamed Event"),
-                    "impact": event.get("importance", "Low")
-                })
-            except (ValueError, TypeError):
-                continue # Skip events with malformed dates
-        
-        # Store in MongoDB
-        db = mongo_client[PLANNER_DB_NAME]
-        collection = db[PLANNER_COLLECTION_NAME]
-        
-        # Clear old data and insert new data
-        collection.delete_many({})
-        if transformed_events:
-            collection.insert_many(transformed_events)
-        
-        st.sidebar.success(f"✅ Fetched {len(transformed_events)} events!")
-        return True
-
-    except requests.RequestException as e:
-        st.sidebar.error(f"API request failed: {e}")
-        return False
-    except Exception as e:
-        st.sidebar.error(f"An error occurred: {e}")
-        return False
-
-
-# --- HEADLINE FETCHER FUNCTIONS (Unchanged) ---
+# --- HEADLINE FETCHER FUNCTIONS ---
 @st.cache_data(ttl=300)
 def summarize_headline(text):
     if not text or not client: return "OpenAI client not available."
@@ -289,7 +214,7 @@ def get_headlines_from_db(limit=50):
     items = list(collection.find({}, {'_id': 0}).sort("publishedDate", -1).limit(limit))
     return items
 
-# --- TRADING PLAN FUNCTIONS (Unchanged) ---
+# --- TRADING PLAN FUNCTIONS ---
 @st.cache_data(ttl=3600)
 def get_earnings_data(date_str):
     url = f"https://www.earningswhispers.com/api/caldata/{date_str}"
@@ -318,6 +243,7 @@ def get_events_from_db():
 
 @st.cache_data(ttl=3600)
 def analyze_seasonal_bias(symbol: str, target_date_str: str, lookback_years: int = 25):
+    # This function remains unchanged from original script
     try:
         target_date = pd.to_datetime(target_date_str)
         data = yf.download(symbol, start=target_date - pd.DateOffset(years=lookback_years), end=datetime.now(), interval='1wk', progress=False, auto_adjust=True)
@@ -342,6 +268,7 @@ def analyze_seasonal_bias(symbol: str, target_date_str: str, lookback_years: int
         return pd.DataFrame(results).set_index('Lookback'), week_data[['Return']].rename(columns={'Return': 'Weekly Return'})
     except Exception: return None, None
 def get_seasonal_bias_label(avg_return: float, percent_positive: float, std_dev: float) -> str:
+    # This function remains unchanged
     if pd.isna(std_dev) or std_dev == 0: std_dev = 0.01
     STRONG_RETURN, STRONG_WIN, WEAK_WIN, NEUTRAL_UP, NEUTRAL_LOW = std_dev, 0.66, 0.33, 0.55, 0.45
     if avg_return > STRONG_RETURN and percent_positive >= STRONG_WIN: return "Strongly Bullish"
@@ -350,6 +277,7 @@ def get_seasonal_bias_label(avg_return: float, percent_positive: float, std_dev:
     if avg_return < 0 and percent_positive < NEUTRAL_LOW: return "Bearish"
     return "Neutral / Inconclusive"
 def analyze_day_events(target_date, events):
+    # This function remains unchanged
     plan, reason = "Standard Day Plan", "No high-impact USD news found. Proceed with the Standard Day Plan."
     has_high_impact_usd_event, morning_events, afternoon_events, all_day_events = False, [], [], []
     for event in events:
@@ -372,8 +300,9 @@ def analyze_day_events(target_date, events):
         plan, reason = "News Day Plan", "High-impact USD news detected. The News Day Plan is active."
     return plan, reason, morning_events, afternoon_events, all_day_events
 
-# --- UI COMPONENTS (Unchanged) ---
+# --- UI COMPONENTS ---
 def display_header_dashboard():
+    # This function remains unchanged
     current_time, time_to_open = get_current_market_time(), time_until_market_open()
     st.markdown('<div class="quick-info-grid">', unsafe_allow_html=True)
     col1, col2, col3, col4 = st.columns(4)
@@ -388,6 +317,7 @@ def display_header_dashboard():
     with col4: st.markdown(f'<div class="info-card"><div class="metric-label">Trading Day</div><div class="metric-value">{date.today().strftime("%A")}</div></div>', unsafe_allow_html=True)
     st.markdown('</div>', unsafe_allow_html=True)
 def get_current_session(current_time):
+    # This function remains unchanged
     current = current_time.time()
     if time(2, 0) <= current < time(5, 0): return "London"
     elif time(9, 30) <= current < time(12, 0): return "NY Morning"
@@ -395,42 +325,55 @@ def get_current_session(current_time):
     elif time(13, 30) <= current < time(16, 0): return "NY Afternoon"
     else: return "Pre-Market"
 def display_sidebar_risk_management():
+    # This function remains unchanged
     st.sidebar.header("🧠 Risk Management")
+
     if 'standard_risk' not in st.session_state: st.session_state.standard_risk = 300
     if 'current_balance' not in st.session_state: st.session_state.current_balance = 2800
     if 'streak' not in st.session_state: st.session_state.streak = 5
     if 'eval_target' not in st.session_state: st.session_state.eval_target = 6000
+
     st.session_state.current_balance = st.sidebar.number_input("Current Profit ($)", value=st.session_state.current_balance, step=50, key="risk_balance")
     st.session_state.streak = st.sidebar.number_input("Win/Loss Streak", value=st.session_state.streak, step=1, key="risk_streak")
     st.session_state.standard_risk = st.sidebar.number_input("Standard Risk ($)", value=st.session_state.standard_risk, step=10, key="risk_standard")
+
     profit_loss = st.session_state.current_balance
     if profit_loss <= 0: suggested_risk, reason, risk_class = st.session_state.standard_risk / 2, "Account in drawdown. Minimum Risk.", "risk-minimum"
     elif st.session_state.streak < 0: suggested_risk, reason, risk_class = st.session_state.standard_risk / 2, f"{abs(st.session_state.streak)}-trade losing streak. Minimum Risk.", "risk-minimum"
     elif st.session_state.streak >= WIN_STREAK_THRESHOLD: suggested_risk, reason, risk_class = st.session_state.standard_risk / 2, f"{st.session_state.streak}-win streak. Defensive Risk.", "risk-defensive"
     elif profit_loss >= st.session_state.eval_target: suggested_risk, reason, risk_class = 0, "Target reached! Stop trading.", "risk-passed"
     else: suggested_risk, reason, risk_class = st.session_state.standard_risk, "Standard operating conditions.", "risk-normal"
+
     st.sidebar.markdown(f'<div class="risk-output {risk_class}"><strong>Next Trade Risk: ${int(suggested_risk)}</strong><br><small>{reason}</small></div>', unsafe_allow_html=True)
 def display_sidebar_payout_planner():
+    # This function remains unchanged
     st.sidebar.header("💰 Payout Planner")
+    
     if 'payout_balance' not in st.session_state: st.session_state.payout_balance = 10000
     if 'payout_target' not in st.session_state: st.session_state.payout_target = 15000
     if 'monthly_payout' not in st.session_state: st.session_state.monthly_payout = 2000
+    
     st.session_state.payout_balance = st.sidebar.number_input("Current Balance ($)", value=st.session_state.payout_balance, step=100)
     st.session_state.payout_target = st.sidebar.number_input("Next Payout Target ($)", value=st.session_state.payout_target, step=500)
     st.session_state.monthly_payout = st.sidebar.number_input("Monthly Payout Goal ($)", value=st.session_state.monthly_payout, step=100)
+    
     remaining = st.session_state.payout_target - st.session_state.payout_balance
     progress_pct = (st.session_state.payout_balance / st.session_state.payout_target) * 100 if st.session_state.payout_target > 0 else 0
+    
     st.sidebar.progress(min(progress_pct / 100, 1.0))
+    
     col1, col2, col3 = st.sidebar.columns(3)
     col1.metric("Remaining", f"${remaining:,.0f}")
     col2.metric("Progress", f"{progress_pct:.1f}%")
     col3.metric("Daily Target", f"${st.session_state.monthly_payout / 22:.0f}")
 def display_main_plan_card(plan, reason):
+    # This function remains unchanged
     if plan == "No Trade Day": card_class, icon, title = "no-trade", "🚫", "NO TRADE DAY"
     elif plan == "News Day Plan": card_class, icon, title = "news-day", "📰", "NEWS DAY PLAN"
     else: card_class, icon, title = "standard-day", "✅", "STANDARD DAY PLAN"
     st.markdown(f'<div class="main-plan-card {card_class}"><h1 style="font-size: 1.8rem; margin: 0;">{icon}</h1><h2 style="margin: 0.3rem 0; font-size: 1.4rem;">{title}</h2><p style="font-size: 1rem; margin: 0.5rem 0 0 0; opacity: 0.9;">{reason}</p></div>', unsafe_allow_html=True)
 def display_compact_events(morning_events, afternoon_events, all_day_events):
+    # This function remains unchanged
     if not any([morning_events, afternoon_events, all_day_events]): st.info("📅 No economic events scheduled for today."); return
     tabs = st.tabs(["🌅 Morning", "🌇 Afternoon", "📅 All Day"] if all_day_events else ["🌅 Morning", "🌇 Afternoon"])
     with tabs[0]:
@@ -446,6 +389,7 @@ def display_compact_events(morning_events, afternoon_events, all_day_events):
                 st.markdown(f'<div class="event-compact {impact_class}"><div class="event-time">{e["time"]}</div><div class="event-currency { "usd" if e["currency"] == "USD" else ""}">{e["currency"]}</div><div style="flex: 1; margin-left: 15px;">{e["name"]}</div></div>', unsafe_allow_html=True)
         else: st.markdown("*No afternoon events*")
 def display_action_checklist(plan):
+    # This function remains unchanged
     st.markdown('<div class="action-section"><h3>🎯 Action Items</h3>', unsafe_allow_html=True)
     if plan == "News Day Plan": actions = [("🚫", "DO NOT trade morning session"), ("📊", "Mark NY Lunch Range"), ("👀", "Wait for liquidity raid after news"), ("🎯", "Prime entry: 2:00 PM - 3:00 PM"), ("✅", "Enter on MSS + FVG confirmation")]
     elif plan == "Standard Day Plan": actions = [("📈", "Mark Previous Day PM Range"), ("🌍", "Mark London Session Range"), ("👀", "Watch NY Open Judas Swing"), ("🎯", "Prime entry: 10:00 AM - 11:00 AM"), ("✅", "Enter after sweep with MSS + FVG")]
@@ -453,6 +397,7 @@ def display_action_checklist(plan):
     for emoji, text in actions: st.markdown(f'<div class="action-item"><div class="action-emoji">{emoji}</div><div>{text}</div></div>', unsafe_allow_html=True)
     st.markdown('</div>', unsafe_allow_html=True)
 def display_seasonality_analysis(symbol, target_date):
+    # This function remains unchanged
     st.markdown("### 🗓️ Weekly Seasonal Bias")
     summary_df, detailed_df = analyze_seasonal_bias(symbol=symbol, target_date_str=target_date.strftime('%Y-%m-%d'))
     if summary_df is not None:
@@ -461,6 +406,7 @@ def display_seasonality_analysis(symbol, target_date):
         with st.expander("Show Detailed Yearly Returns"): st.dataframe(detailed_df, use_container_width=True, height=400)
     else: st.info(f"Could not retrieve seasonal data for {symbol}.")
 def display_week_view(selected_date, records):
+    # This function remains unchanged
     st.markdown("### 📅 Week Overview")
     start_of_week = selected_date - timedelta(days=selected_date.weekday())
     week_days = [start_of_week + timedelta(days=i) for i in range(5)]
@@ -479,15 +425,20 @@ def display_week_view(selected_date, records):
             with st.expander(f"🚨 High Impact Events ({len(high_impact)})"):
                 for event in high_impact: st.markdown(f"• **{parse_time(event.get('time', '')).strftime('%I:%M %p') if parse_time(event.get('time', '')) else 'All Day'}** - {event.get('currency', '')} - {event.get('event', '')}")
 
-# --- HEADLINES TAB UI (Unchanged) ---
+# --- NEW: HEADLINES TAB UI ---
 def display_headlines_tab():
     st.header("🌍 GEO: Financial Headlines Aggregator")
     st.write("Fetches and summarizes the latest market-moving news with AI.")
+    
     if st.button("📡 Fetch & Summarize Latest Headlines", type="primary"):
         with st.spinner("Fetching headlines, this may take a moment..."):
             st.session_state.headlines = fetch_and_process_all_headlines()
+
+    # Load initial headlines from DB if not already fetched
     if 'headlines' not in st.session_state:
         st.session_state.headlines = get_headlines_from_db()
+
+    # Display logic
     if st.session_state.get('headlines'):
         st.success(f"Displaying {len(st.session_state.headlines)} headlines.")
         st.markdown("---")
@@ -496,7 +447,9 @@ def display_headlines_tab():
             summary = item.get("summary", "No summary available.")
             url = item.get("url", "")
             category = item.get("category", "N/A")
+            # Handle both datetime objects and string dates from DB
             published_date = item.get("publishedDate") or item.get("ParsedDate")
+
             with st.container(border=True):
                 st.markdown(f"##### {title}")
                 st.caption(f"**Category:** `{category}` | **Published:** {published_date.strftime('%Y-%m-%d %H:%M ET') if published_date else 'N/A'}")
@@ -514,11 +467,14 @@ def main():
     # --- Sidebar ---
     st.sidebar.title("Controls & Planning")
     if st.sidebar.button("🔄 Fetch Economic Data", type="primary"):
-        with st.spinner("Fetching data from API..."):
-            success = fetch_and_store_economic_events()
-            if success:
+        with st.spinner("Fetching data from Forex Factory..."):
+            try:
+                subprocess.run([sys.executable, "ffscraper.py"], check=True, capture_output=True, text=True)
+                st.sidebar.success("✅ Economic Data Fetched!")
                 st.cache_data.clear() # Clear all cached data
                 st.rerun()
+            except Exception as e:
+                st.sidebar.error(f"❌ Update failed: {e}")
     
     display_sidebar_risk_management()
     st.sidebar.markdown("---")
