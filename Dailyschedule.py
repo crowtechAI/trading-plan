@@ -1,326 +1,397 @@
-# Enhanced functions to handle month-end issues in your main dashboard
+# Month-end monitoring and backup data system
 
 import streamlit as st
 import pandas as pd
-import subprocess
-import sys
+import yfinance as yf
 from datetime import datetime, date, timedelta
-import time
 import requests
+import json
+import time
 
-# Enhanced data fetching with better error handling
-def enhanced_fetch_economic_data():
+class BackupDataProvider:
     """
-    Improved economic data fetching with better error handling and diagnostics
+    Provides backup economic data when primary sources fail
     """
-    if st.sidebar.button("🔄 Fetch Economic Data", type="primary"):
-        with st.spinner("Fetching data from Forex Factory..."):
-            try:
-                # Show current date context
-                today = date.today()
-                st.sidebar.info(f"📅 Fetching events from {today} onwards")
-                
-                # Check if we're near month-end (last 3 days of month)
-                next_month = today.replace(day=28) + timedelta(days=4)
-                month_end = next_month - timedelta(days=next_month.day)
-                days_to_month_end = (month_end - today).days
-                
-                if days_to_month_end <= 3:
-                    st.sidebar.warning("⚠️ Near month-end - this may take longer than usual")
-                
-                # Run the scraper with detailed output capture
-                result = subprocess.run(
-                    [sys.executable, "ffscraper.py"], 
-                    check=False,  # Don't raise exception on non-zero exit
-                    capture_output=True, 
-                    text=True,
-                    timeout=120  # 2-minute timeout
-                )
-                
-                # Display detailed results
-                if result.returncode == 0:
-                    st.sidebar.success("✅ Economic Data Fetched!")
-                    if result.stdout:
-                        with st.sidebar.expander("📊 Scraper Output"):
-                            st.code(result.stdout)
-                else:
-                    st.sidebar.error(f"❌ Scraper failed (Exit code: {result.returncode})")
-                    if result.stderr:
-                        with st.sidebar.expander("🔍 Error Details"):
-                            st.code(result.stderr)
-                    if result.stdout:
-                        with st.sidebar.expander("📊 Partial Output"):
-                            st.code(result.stdout)
-                
-                # Clear cache and reload regardless of exit code
-                st.cache_data.clear()
-                time.sleep(1)  # Brief pause before rerun
-                st.rerun()
-                
-            except subprocess.TimeoutExpired:
-                st.sidebar.error("⏱️ Scraper timed out - Forex Factory may be slow")
-            except FileNotFoundError:
-                st.sidebar.error("📁 ffscraper.py not found - check file location")
-            except Exception as e:
-                st.sidebar.error(f"💥 Unexpected error: {e}")
-
-# Enhanced data validation
-@st.cache_data(ttl=300)  # Cache for 5 minutes only
-def get_events_from_db_enhanced():
-    """
-    Enhanced version with better error handling and data validation
-    """
-    client = init_connection()
-    if client is None:
-        return pd.DataFrame(), "No database connection"
     
-    try:
-        db = client[PLANNER_DB_NAME]
-        collection = db[PLANNER_COLLECTION_NAME]
+    def __init__(self):
+        self.backup_events = self.get_static_recurring_events()
+    
+    def get_static_recurring_events(self):
+        """
+        Static list of recurring high-impact events that happen monthly
+        """
+        return [
+            {
+                'event': 'Non-Farm Payrolls',
+                'currency': 'USD',
+                'impact': 'High',
+                'typical_day': 'First Friday',
+                'typical_time': '08:30',
+                'description': 'Monthly employment data release'
+            },
+            {
+                'event': 'CPI (Consumer Price Index)',
+                'currency': 'USD', 
+                'impact': 'High',
+                'typical_day': 'Mid-month (10th-15th)',
+                'typical_time': '08:30',
+                'description': 'Monthly inflation data'
+            },
+            {
+                'event': 'FOMC Meeting Minutes',
+                'currency': 'USD',
+                'impact': 'High', 
+                'typical_day': '3 weeks after FOMC',
+                'typical_time': '14:00',
+                'description': 'Federal Reserve meeting minutes'
+            },
+            {
+                'event': 'Retail Sales',
+                'currency': 'USD',
+                'impact': 'Medium',
+                'typical_day': 'Mid-month (13th-17th)',
+                'typical_time': '08:30',
+                'description': 'Monthly consumer spending data'
+            },
+            {
+                'event': 'PPI (Producer Price Index)',
+                'currency': 'USD',
+                'impact': 'Medium',
+                'typical_day': 'Day after CPI',
+                'typical_time': '08:30',
+                'description': 'Monthly wholesale inflation data'
+            }
+        ]
+    
+    def estimate_next_nfp_date(self, from_date=None):
+        """
+        Calculate the next Non-Farm Payrolls date (First Friday of month)
+        """
+        if from_date is None:
+            from_date = date.today()
         
-        # Get document count first
-        doc_count = collection.count_documents({})
+        # Start with first day of next month
+        if from_date.day == 1:
+            target_month = from_date
+        else:
+            if from_date.month == 12:
+                target_month = from_date.replace(year=from_date.year + 1, month=1, day=1)
+            else:
+                target_month = from_date.replace(month=from_date.month + 1, day=1)
         
-        if doc_count == 0:
-            return pd.DataFrame(), f"Database connected but no events found (0 documents)"
+        # Find first Friday
+        days_to_friday = (4 - target_month.weekday()) % 7
+        first_friday = target_month + timedelta(days=days_to_friday)
         
-        # Fetch with date filter to ensure we get relevant events
-        today = datetime.now()
-        week_ago = today - timedelta(days=7)
-        week_ahead = today + timedelta(days=14)
+        return first_friday
+    
+    def estimate_next_cpi_date(self, from_date=None):
+        """
+        Estimate next CPI date (usually around 13th of month)
+        """
+        if from_date is None:
+            from_date = date.today()
         
-        # Try to find events with recent dates
-        recent_query = {
-            "$or": [
-                {"date": {"$exists": True}},  # Any document with date field
-                {"_id": {"$exists": True}}     # Fallback to any document
-            ]
+        # Target day is usually 13th, but can vary
+        target_day = 13
+        
+        if from_date.day <= target_day and from_date.month != 12:
+            target_date = from_date.replace(day=target_day)
+        else:
+            # Next month
+            if from_date.month == 12:
+                target_date = from_date.replace(year=from_date.year + 1, month=1, day=target_day)
+            else:
+                target_date = from_date.replace(month=from_date.month + 1, day=target_day)
+        
+        # Adjust if it falls on weekend
+        if target_date.weekday() >= 5:  # Saturday or Sunday
+            # Move to next Tuesday (common adjustment)
+            days_to_add = (7 - target_date.weekday()) + 1
+            target_date += timedelta(days=days_to_add)
+        
+        return target_date
+    
+    def generate_emergency_calendar(self, days_ahead=14):
+        """
+        Generate emergency calendar when scraping fails
+        """
+        events = []
+        start_date = date.today()
+        end_date = start_date + timedelta(days=days_ahead)
+        
+        # NFP
+        nfp_date = self.estimate_next_nfp_date(start_date)
+        if start_date <= nfp_date <= end_date:
+            events.append({
+                'date': nfp_date.strftime('%d/%m/%Y'),
+                'time': '8:30AM',
+                'currency': 'USD',
+                'impact': 'High',
+                'event': 'Non-Farm Payrolls',
+                'actual': '',
+                'forecast': '',
+                'previous': '',
+                'source': 'Emergency Calendar'
+            })
+        
+        # CPI
+        cpi_date = self.estimate_next_cpi_date(start_date)
+        if start_date <= cpi_date <= end_date:
+            events.append({
+                'date': cpi_date.strftime('%d/%m/%Y'),
+                'time': '8:30AM', 
+                'currency': 'USD',
+                'impact': 'High',
+                'event': 'Consumer Price Index (CPI)',
+                'actual': '',
+                'forecast': '',
+                'previous': '',
+                'source': 'Emergency Calendar'
+            })
+        
+        return events
+
+class DataHealthMonitor:
+    """
+    Monitors data health and provides fallback strategies
+    """
+    
+    def __init__(self):
+        self.backup_provider = BackupDataProvider()
+        self.health_checks = []
+    
+    def check_forex_factory_health(self):
+        """Check if Forex Factory is accessible"""
+        try:
+            response = requests.get('https://www.forexfactory.com', timeout=10)
+            if response.status_code == 200:
+                return True, "Forex Factory accessible"
+            else:
+                return False, f"Forex Factory returned {response.status_code}"
+        except Exception as e:
+            return False, f"Forex Factory unreachable: {e}"
+    
+    def check_financial_juice_health(self):
+        """Check if Financial Juice is accessible"""
+        try:
+            response = requests.get('https://www.financialjuice.com', timeout=10)
+            if response.status_code == 200:
+                return True, "Financial Juice accessible"
+            else:
+                return False, f"Financial Juice returned {response.status_code}"
+        except Exception as e:
+            return False, f"Financial Juice unreachable: {e}"
+    
+    def check_data_freshness(self, df):
+        """Check if data is fresh enough"""
+        if df.empty:
+            return False, "No data available"
+        
+        if 'date' not in df.columns:
+            return False, "No date column in data"
+        
+        try:
+            # Parse dates and find the most recent
+            df['parsed_date'] = df['date'].apply(lambda x: self.parse_date_safe(x))
+            valid_dates = df['parsed_date'].dropna()
+            
+            if valid_dates.empty:
+                return False, "No valid dates in data"
+            
+            most_recent = valid_dates.max()
+            days_old = (date.today() - most_recent).days
+            
+            if days_old <= 7:
+                return True, f"Data is {days_old} days old (acceptable)"
+            else:
+                return False, f"Data is {days_old} days old (stale)"
+                
+        except Exception as e:
+            return False, f"Error checking data freshness: {e}"
+    
+    def parse_date_safe(self, date_str):
+        """Safely parse date strings"""
+        try:
+            return datetime.strptime(str(date_str).strip(), '%d/%m/%Y').date()
+        except (ValueError, TypeError):
+            return None
+    
+    def run_full_health_check(self, current_data=None):
+        """Run comprehensive health check"""
+        results = {
+            'timestamp': datetime.now(),
+            'overall_health': 'unknown',
+            'checks': {},
+            'recommendations': []
         }
         
-        items = list(collection.find(recent_query, {'_id': 0}).limit(1000))
+        # Check external services
+        ff_healthy, ff_msg = self.check_forex_factory_health()
+        results['checks']['forex_factory'] = {'healthy': ff_healthy, 'message': ff_msg}
         
-        if not items:
-            return pd.DataFrame(), f"Database has {doc_count} documents but query returned no results"
+        fj_healthy, fj_msg = self.check_financial_juice_health()
+        results['checks']['financial_juice'] = {'healthy': fj_healthy, 'message': fj_msg}
         
-        df = pd.DataFrame(items)
+        # Check data freshness
+        if current_data is not None:
+            fresh_healthy, fresh_msg = self.check_data_freshness(current_data)
+            results['checks']['data_freshness'] = {'healthy': fresh_healthy, 'message': fresh_msg}
         
-        # Data quality checks
-        quality_info = []
-        if 'date' in df.columns:
-            valid_dates = df['date'].notna().sum()
-            quality_info.append(f"{valid_dates}/{len(df)} events have valid dates")
+        # Determine overall health
+        healthy_count = sum(1 for check in results['checks'].values() if check['healthy'])
+        total_checks = len(results['checks'])
         
-        if 'event' in df.columns:
-            valid_events = df['event'].notna().sum()
-            quality_info.append(f"{valid_events}/{len(df)} events have names")
+        if healthy_count == total_checks:
+            results['overall_health'] = 'good'
+        elif healthy_count >= total_checks // 2:
+            results['overall_health'] = 'degraded'
+        else:
+            results['overall_health'] = 'poor'
         
-        quality_msg = f"Loaded {len(df)} events. " + " | ".join(quality_info)
+        # Generate recommendations
+        if not ff_healthy:
+            results['recommendations'].append("🔄 Retry Forex Factory scraping in 1 hour")
         
-        return df, quality_msg
+        if not fj_healthy:
+            results['recommendations'].append("🔑 Update Financial Juice API tokens")
         
-    except Exception as e:
-        return pd.DataFrame(), f"Database error: {str(e)}"
+        if current_data is not None and not fresh_healthy:
+            results['recommendations'].append("📅 Use emergency calendar for critical events")
+            results['recommendations'].append("🔄 Force refresh economic data")
+        
+        if results['overall_health'] == 'poor':
+            results['recommendations'].append("⚠️ Consider using backup data sources")
+            results['recommendations'].append("📞 Check financial news websites manually")
+        
+        return results
 
-# Enhanced display function with diagnostics
-def display_enhanced_data_status():
-    """
-    Display detailed information about data status and quality
-    """
-    df, status_msg = get_events_from_db_enhanced()
+def display_health_dashboard():
+    """Display system health dashboard"""
+    st.header("🏥 System Health Dashboard")
     
-    # Create an info box with detailed status
-    if df.empty:
-        st.warning(f"📭 {status_msg}")
-        
-        # Provide actionable guidance
-        st.markdown("""
-        **Possible solutions:**
-        1. 🔄 Click **Fetch Economic Data** to scrape fresh data
-        2. 🕐 If it's month-end, try again in a few hours
-        3. 🔍 Check the error details in the sidebar after fetching
-        4. 💾 Verify your MongoDB connection is working
-        """)
-        
-        # Quick database test
-        if st.button("🏥 Test Database Connection"):
-            client = init_connection()
-            if client:
-                try:
-                    # Test basic connectivity
-                    client.admin.command('ping')
-                    st.success("✅ Database connection is working")
-                    
-                    # Check collections
-                    db = client[PLANNER_DB_NAME]
-                    collections = db.list_collection_names()
-                    st.info(f"📂 Available collections: {collections}")
-                    
-                    # Check specific collection
-                    if PLANNER_COLLECTION_NAME in collections:
-                        collection = db[PLANNER_COLLECTION_NAME]
-                        sample_doc = collection.find_one()
-                        if sample_doc:
-                            st.success("✅ Economic events collection exists with data")
-                            with st.expander("📄 Sample Document"):
-                                st.json(sample_doc)
-                        else:
-                            st.warning("⚠️ Collection exists but is empty")
-                    else:
-                        st.warning(f"⚠️ Collection '{PLANNER_COLLECTION_NAME}' does not exist")
-                        
-                except Exception as e:
-                    st.error(f"❌ Database test failed: {e}")
+    monitor = DataHealthMonitor()
+    
+    if st.button("🔍 Run Health Check"):
+        with st.spinner("Running comprehensive health check..."):
+            # Get current data for freshness check
+            df = get_events_from_db() if 'get_events_from_db' in globals() else pd.DataFrame()
+            health_results = monitor.run_full_health_check(df)
+            
+            # Display overall status
+            if health_results['overall_health'] == 'good':
+                st.success("✅ All systems operational")
+            elif health_results['overall_health'] == 'degraded':
+                st.warning("⚠️ Some systems experiencing issues")
             else:
-                st.error("❌ Cannot connect to database")
-    else:
-        st.success(f"✅ {status_msg}")
-        
-        # Show data freshness
-        if 'date' in df.columns:
-            try:
-                # Parse dates and find the range
-                df['parsed_date'] = df['date'].apply(parse_date)
-                valid_dates = df['parsed_date'].dropna()
-                
-                if not valid_dates.empty:
-                    min_date = valid_dates.min()
-                    max_date = valid_dates.max()
-                    today = date.today()
-                    
-                    # Check data freshness
-                    if max_date >= today:
-                        days_ahead = (max_date - today).days
-                        st.info(f"📅 Events available through {max_date} ({days_ahead} days ahead)")
-                    else:
-                        days_behind = (today - max_date).days
-                        st.warning(f"⚠️ Data is {days_behind} days old (latest: {max_date})")
+                st.error("❌ Multiple system failures detected")
+            
+            # Display individual checks
+            st.subheader("🔍 Service Status")
+            for service, result in health_results['checks'].items():
+                status_icon = "✅" if result['healthy'] else "❌"
+                service_name = service.replace('_', ' ').title()
+                st.markdown(f"{status_icon} **{service_name}**: {result['message']}")
+            
+            # Display recommendations
+            if health_results['recommendations']:
+                st.subheader("💡 Recommended Actions")
+                for rec in health_results['recommendations']:
+                    st.markdown(f"- {rec}")
+            
+            # Emergency calendar option
+            if health_results['overall_health'] == 'poor':
+                st.subheader("🚨 Emergency Options")
+                if st.button("📅 Generate Emergency Calendar"):
+                    emergency_events = monitor.backup_provider.generate_emergency_calendar()
+                    if emergency_events:
+                        st.success(f"Generated {len(emergency_events)} emergency events")
+                        df = pd.DataFrame(emergency_events)
+                        st.dataframe(df)
                         
-            except Exception as e:
-                st.warning(f"⚠️ Could not parse date information: {e}")
+                        # Option to save emergency data
+                        if st.button("💾 Use Emergency Calendar"):
+                            # Save to session state or database
+                            st.session_state['emergency_calendar'] = emergency_events
+                            st.success("Emergency calendar activated!")
+                    else:
+                        st.warning("No emergency events for the next 2 weeks")
 
-# Enhanced month-end detection
-def is_month_end_period():
-    """
-    Detect if we're in a problematic month-end period
-    """
+def display_month_end_status():
+    """Display month-end specific status and warnings"""
     today = date.today()
     
-    # Last 3 days of current month
+    # Calculate month-end metrics
     next_month = today.replace(day=28) + timedelta(days=4)
     month_end = next_month - timedelta(days=next_month.day)
     days_to_month_end = (month_end - today).days
     
-    # First 2 days of new month
     first_of_month = today.replace(day=1)
     days_from_month_start = (today - first_of_month).days
     
-    return days_to_month_end <= 3 or days_from_month_start <= 2
-
-def display_month_end_warning():
-    """
-    Display special warning during problematic periods
-    """
-    if is_month_end_period():
-        st.warning("""
-        🗓️ **Month-End Period Notice**
+    st.sidebar.subheader("📅 Month-End Status")
+    
+    if days_to_month_end <= 3:
+        st.sidebar.error(f"⚠️ {days_to_month_end} days to month-end")
+        st.sidebar.markdown("**Expected Issues:**")
+        st.sidebar.markdown("- API token expiration")
+        st.sidebar.markdown("- Slower website responses") 
+        st.sidebar.markdown("- Increased anti-bot measures")
         
-        You're currently in a month-end transition period. This can cause:
-        - Slower data fetching from financial websites
-        - Temporary API token expiration issues  
-        - Increased anti-bot measures on financial sites
+    elif days_from_month_start <= 2:
+        st.sidebar.warning(f"⚠️ {days_from_month_start} days into new month")
+        st.sidebar.markdown("**Potential Issues:**")
+        st.sidebar.markdown("- Calendar pagination changes")
+        st.sidebar.markdown("- New API rate limits")
         
-        If data fetching fails, try again in a few hours or use cached data.
-        """)
+    else:
+        st.sidebar.success("✅ Normal period")
+    
+    # Show next critical dates
+    monitor = DataHealthMonitor()
+    next_nfp = monitor.backup_provider.estimate_next_nfp_date()
+    next_cpi = monitor.backup_provider.estimate_next_cpi_date()
+    
+    st.sidebar.markdown("**Next Key Events:**")
+    st.sidebar.markdown(f"📊 NFP: {next_nfp.strftime('%b %d')}")
+    st.sidebar.markdown(f"📈 CPI: {next_cpi.strftime('%b %d')}")
 
-# Enhanced main application updates
-def enhanced_main():
+# Integration function for your main app
+def enhanced_main_with_monitoring():
     """
-    Enhanced main function with better error handling
+    Enhanced main function with health monitoring
     """
     st.title("📊 US Index Trading Dashboard")
-
-    # Show month-end warning if applicable
-    display_month_end_warning()
-
-    # --- Enhanced Sidebar ---
-    st.sidebar.title("Controls & Planning")
     
-    # Enhanced data fetching
-    enhanced_fetch_economic_data()
+    # Add health monitoring tab
+    tab1, tab2, tab3, tab4 = st.tabs(["📈 Daily Plan", "🌍 Headlines", "🏥 Health", "📅 Emergency"])
     
-    # Show detailed data status
-    with st.sidebar.expander("📊 Data Status", expanded=False):
-        display_enhanced_data_status()
-    
-    # Rest of your sidebar components remain the same
-    display_sidebar_risk_management()
-    st.sidebar.markdown("---")
-    display_sidebar_payout_planner()
-
-    # --- Enhanced Main Page ---
-    display_header_dashboard()
-
-    tab1, tab2 = st.tabs(["📈 Daily Plan", "🌍 Headlines"])
-
     with tab1:
-        col1, col2 = st.columns([2, 1])
-        with col1:
-            selected_date = st.date_input("📅 Analysis Date", value=date.today())
-        with col2:
-            view_mode = st.selectbox("View Mode", ["Today", "Week"], index=0)
-        
-        st.markdown("---")
-
-        if selected_date.weekday() >= 5:
-            st.markdown('<div class="weekend-notice"><h2>🏖️ Weekend Mode</h2><p>Markets are closed. Relax, review, and prepare for the week ahead!</p></div>', unsafe_allow_html=True)
-            return
-
-        # Enhanced data loading with better error messages
-        df, status_msg = get_events_from_db_enhanced()
-        
-        if df.empty:
-            st.error(f"📭 **No Economic Data Available**")
-            st.info(status_msg)
-            
-            col1, col2 = st.columns(2)
-            with col1:
-                if st.button("🔄 Try Fetching Data Now", type="primary"):
-                    enhanced_fetch_economic_data()
-            
-            with col2:
-                if st.button("📊 Show Sample Analysis", type="secondary"):
-                    st.info("Showing analysis with sample data structure...")
-                    # You could show a demo with placeholder data here
-            
-            return
-
-        # Continue with your existing logic...
-        records = df.to_dict('records')
-        get_events_for = lambda d: [row for row in records if parse_date(row.get('date', '')) == d]
-
-        # Rest of your main logic remains the same
-        if view_mode == "Today":
-            events = get_events_for(selected_date)
-            plan, reason, morning, afternoon, allday = analyze_day_events(selected_date, events) if events else ("Standard Day Plan", "No economic events found.", [], [], [])
-            display_main_plan_card(plan, reason)
-            st.markdown("---")
-            display_seasonality_analysis('QQQ', selected_date)
-            
-            col1, col2 = st.columns([1, 1])
-            with col1:
-                display_action_checklist(plan)
-            with col2:
-                st.markdown("### 📅 Today's Events")
-                display_compact_events(morning, afternoon, allday)
-                st.markdown("### 💰 Today's Earnings")
-                earnings_today = fetch_and_format_earnings(selected_date)
-                if earnings_today:
-                    with st.container(height=250):
-                        for item in earnings_today: st.markdown(f"• **{item['company']}**")
-                else:
-                    st.markdown("*No major earnings reports scheduled.*")
-        else: # Week view
-            display_week_view(selected_date, records)
+        # Your existing daily plan code
+        display_month_end_status()  # Add to sidebar
+        # ... rest of your existing code
+        pass
     
     with tab2:
-        display_headlines_tab()
+        # Your existing headlines code
+        pass
+    
+    with tab3:
+        display_health_dashboard()
+    
+    with tab4:
+        st.header("🚨 Emergency Calendar")
+        st.write("Use this when primary data sources are unavailable")
+        
+        backup_provider = BackupDataProvider()
+        emergency_events = backup_provider.generate_emergency_calendar()
+        
+        if emergency_events:
+            st.dataframe(pd.DataFrame(emergency_events))
+            
+            if st.button("🔄 Use Emergency Data"):
+                # Save emergency data to your database or session
+                st.session_state['using_emergency_data'] = True
+                st.success("Emergency calendar is now active!")
+        else:
+            st.info("No critical events in the next 2 weeks")
