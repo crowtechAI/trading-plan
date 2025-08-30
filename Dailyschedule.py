@@ -1,397 +1,580 @@
-# Month-end monitoring and backup data system
-
 import streamlit as st
 import pandas as pd
 import yfinance as yf
-from datetime import datetime, date, timedelta
+from datetime import datetime, time, date, timedelta
+import pytz
+import pymongo
 import requests
 import json
-import time
+from openai import OpenAI
+from dateutil.relativedelta import relativedelta # Added for month calculations
 
-class BackupDataProvider:
-    """
-    Provides backup economic data when primary sources fail
-    """
-    
-    def __init__(self):
-        self.backup_events = self.get_static_recurring_events()
-    
-    def get_static_recurring_events(self):
-        """
-        Static list of recurring high-impact events that happen monthly
-        """
-        return [
-            {
-                'event': 'Non-Farm Payrolls',
-                'currency': 'USD',
-                'impact': 'High',
-                'typical_day': 'First Friday',
-                'typical_time': '08:30',
-                'description': 'Monthly employment data release'
-            },
-            {
-                'event': 'CPI (Consumer Price Index)',
-                'currency': 'USD', 
-                'impact': 'High',
-                'typical_day': 'Mid-month (10th-15th)',
-                'typical_time': '08:30',
-                'description': 'Monthly inflation data'
-            },
-            {
-                'event': 'FOMC Meeting Minutes',
-                'currency': 'USD',
-                'impact': 'High', 
-                'typical_day': '3 weeks after FOMC',
-                'typical_time': '14:00',
-                'description': 'Federal Reserve meeting minutes'
-            },
-            {
-                'event': 'Retail Sales',
-                'currency': 'USD',
-                'impact': 'Medium',
-                'typical_day': 'Mid-month (13th-17th)',
-                'typical_time': '08:30',
-                'description': 'Monthly consumer spending data'
-            },
-            {
-                'event': 'PPI (Producer Price Index)',
-                'currency': 'USD',
-                'impact': 'Medium',
-                'typical_day': 'Day after CPI',
-                'typical_time': '08:30',
-                'description': 'Monthly wholesale inflation data'
-            }
-        ]
-    
-    def estimate_next_nfp_date(self, from_date=None):
-        """
-        Calculate the next Non-Farm Payrolls date (First Friday of month)
-        """
-        if from_date is None:
-            from_date = date.today()
-        
-        # Start with first day of next month
-        if from_date.day == 1:
-            target_month = from_date
-        else:
-            if from_date.month == 12:
-                target_month = from_date.replace(year=from_date.year + 1, month=1, day=1)
-            else:
-                target_month = from_date.replace(month=from_date.month + 1, day=1)
-        
-        # Find first Friday
-        days_to_friday = (4 - target_month.weekday()) % 7
-        first_friday = target_month + timedelta(days=days_to_friday)
-        
-        return first_friday
-    
-    def estimate_next_cpi_date(self, from_date=None):
-        """
-        Estimate next CPI date (usually around 13th of month)
-        """
-        if from_date is None:
-            from_date = date.today()
-        
-        # Target day is usually 13th, but can vary
-        target_day = 13
-        
-        if from_date.day <= target_day and from_date.month != 12:
-            target_date = from_date.replace(day=target_day)
-        else:
-            # Next month
-            if from_date.month == 12:
-                target_date = from_date.replace(year=from_date.year + 1, month=1, day=target_day)
-            else:
-                target_date = from_date.replace(month=from_date.month + 1, day=target_day)
-        
-        # Adjust if it falls on weekend
-        if target_date.weekday() >= 5:  # Saturday or Sunday
-            # Move to next Tuesday (common adjustment)
-            days_to_add = (7 - target_date.weekday()) + 1
-            target_date += timedelta(days=days_to_add)
-        
-        return target_date
-    
-    def generate_emergency_calendar(self, days_ahead=14):
-        """
-        Generate emergency calendar when scraping fails
-        """
-        events = []
-        start_date = date.today()
-        end_date = start_date + timedelta(days=days_ahead)
-        
-        # NFP
-        nfp_date = self.estimate_next_nfp_date(start_date)
-        if start_date <= nfp_date <= end_date:
-            events.append({
-                'date': nfp_date.strftime('%d/%m/%Y'),
-                'time': '8:30AM',
-                'currency': 'USD',
-                'impact': 'High',
-                'event': 'Non-Farm Payrolls',
-                'actual': '',
-                'forecast': '',
-                'previous': '',
-                'source': 'Emergency Calendar'
-            })
-        
-        # CPI
-        cpi_date = self.estimate_next_cpi_date(start_date)
-        if start_date <= cpi_date <= end_date:
-            events.append({
-                'date': cpi_date.strftime('%d/%m/%Y'),
-                'time': '8:30AM', 
-                'currency': 'USD',
-                'impact': 'High',
-                'event': 'Consumer Price Index (CPI)',
-                'actual': '',
-                'forecast': '',
-                'previous': '',
-                'source': 'Emergency Calendar'
-            })
-        
-        return events
+# --- CONFIGURATION ---
+st.set_page_config(
+    page_title="US Index Trading Dashboard",
+    page_icon="📊",
+    layout="wide",
+    initial_sidebar_state="expanded"
+)
 
-class DataHealthMonitor:
-    """
-    Monitors data health and provides fallback strategies
-    """
-    
-    def __init__(self):
-        self.backup_provider = BackupDataProvider()
-        self.health_checks = []
-    
-    def check_forex_factory_health(self):
-        """Check if Forex Factory is accessible"""
-        try:
-            response = requests.get('https://www.forexfactory.com', timeout=10)
-            if response.status_code == 200:
-                return True, "Forex Factory accessible"
-            else:
-                return False, f"Forex Factory returned {response.status_code}"
-        except Exception as e:
-            return False, f"Forex Factory unreachable: {e}"
-    
-    def check_financial_juice_health(self):
-        """Check if Financial Juice is accessible"""
-        try:
-            response = requests.get('https://www.financialjuice.com', timeout=10)
-            if response.status_code == 200:
-                return True, "Financial Juice accessible"
-            else:
-                return False, f"Financial Juice returned {response.status_code}"
-        except Exception as e:
-            return False, f"Financial Juice unreachable: {e}"
-    
-    def check_data_freshness(self, df):
-        """Check if data is fresh enough"""
-        if df.empty:
-            return False, "No data available"
-        
-        if 'date' not in df.columns:
-            return False, "No date column in data"
-        
-        try:
-            # Parse dates and find the most recent
-            df['parsed_date'] = df['date'].apply(lambda x: self.parse_date_safe(x))
-            valid_dates = df['parsed_date'].dropna()
-            
-            if valid_dates.empty:
-                return False, "No valid dates in data"
-            
-            most_recent = valid_dates.max()
-            days_old = (date.today() - most_recent).days
-            
-            if days_old <= 7:
-                return True, f"Data is {days_old} days old (acceptable)"
-            else:
-                return False, f"Data is {days_old} days old (stale)"
-                
-        except Exception as e:
-            return False, f"Error checking data freshness: {e}"
-    
-    def parse_date_safe(self, date_str):
-        """Safely parse date strings"""
-        try:
-            return datetime.strptime(str(date_str).strip(), '%d/%m/%Y').date()
-        except (ValueError, TypeError):
-            return None
-    
-    def run_full_health_check(self, current_data=None):
-        """Run comprehensive health check"""
-        results = {
-            'timestamp': datetime.now(),
-            'overall_health': 'unknown',
-            'checks': {},
-            'recommendations': []
-        }
-        
-        # Check external services
-        ff_healthy, ff_msg = self.check_forex_factory_health()
-        results['checks']['forex_factory'] = {'healthy': ff_healthy, 'message': ff_msg}
-        
-        fj_healthy, fj_msg = self.check_financial_juice_health()
-        results['checks']['financial_juice'] = {'healthy': fj_healthy, 'message': fj_msg}
-        
-        # Check data freshness
-        if current_data is not None:
-            fresh_healthy, fresh_msg = self.check_data_freshness(current_data)
-            results['checks']['data_freshness'] = {'healthy': fresh_healthy, 'message': fresh_msg}
-        
-        # Determine overall health
-        healthy_count = sum(1 for check in results['checks'].values() if check['healthy'])
-        total_checks = len(results['checks'])
-        
-        if healthy_count == total_checks:
-            results['overall_health'] = 'good'
-        elif healthy_count >= total_checks // 2:
-            results['overall_health'] = 'degraded'
-        else:
-            results['overall_health'] = 'poor'
-        
-        # Generate recommendations
-        if not ff_healthy:
-            results['recommendations'].append("🔄 Retry Forex Factory scraping in 1 hour")
-        
-        if not fj_healthy:
-            results['recommendations'].append("🔑 Update Financial Juice API tokens")
-        
-        if current_data is not None and not fresh_healthy:
-            results['recommendations'].append("📅 Use emergency calendar for critical events")
-            results['recommendations'].append("🔄 Force refresh economic data")
-        
-        if results['overall_health'] == 'poor':
-            results['recommendations'].append("⚠️ Consider using backup data sources")
-            results['recommendations'].append("📞 Check financial news websites manually")
-        
-        return results
+# Initialize OpenAI client
+try:
+    client = OpenAI(api_key=st.secrets["openai"]["api_key"])
+except (KeyError, FileNotFoundError):
+    st.error("OpenAI API key not found. Please add it to your Streamlit secrets.", icon="🚨")
+    client = None
 
-def display_health_dashboard():
-    """Display system health dashboard"""
-    st.header("🏥 System Health Dashboard")
-    
-    monitor = DataHealthMonitor()
-    
-    if st.button("🔍 Run Health Check"):
-        with st.spinner("Running comprehensive health check..."):
-            # Get current data for freshness check
-            df = get_events_from_db() if 'get_events_from_db' in globals() else pd.DataFrame()
-            health_results = monitor.run_full_health_check(df)
-            
-            # Display overall status
-            if health_results['overall_health'] == 'good':
-                st.success("✅ All systems operational")
-            elif health_results['overall_health'] == 'degraded':
-                st.warning("⚠️ Some systems experiencing issues")
-            else:
-                st.error("❌ Multiple system failures detected")
-            
-            # Display individual checks
-            st.subheader("🔍 Service Status")
-            for service, result in health_results['checks'].items():
-                status_icon = "✅" if result['healthy'] else "❌"
-                service_name = service.replace('_', ' ').title()
-                st.markdown(f"{status_icon} **{service_name}**: {result['message']}")
-            
-            # Display recommendations
-            if health_results['recommendations']:
-                st.subheader("💡 Recommended Actions")
-                for rec in health_results['recommendations']:
-                    st.markdown(f"- {rec}")
-            
-            # Emergency calendar option
-            if health_results['overall_health'] == 'poor':
-                st.subheader("🚨 Emergency Options")
-                if st.button("📅 Generate Emergency Calendar"):
-                    emergency_events = monitor.backup_provider.generate_emergency_calendar()
-                    if emergency_events:
-                        st.success(f"Generated {len(emergency_events)} emergency events")
-                        df = pd.DataFrame(emergency_events)
-                        st.dataframe(df)
-                        
-                        # Option to save emergency data
-                        if st.button("💾 Use Emergency Calendar"):
-                            # Save to session state or database
-                            st.session_state['emergency_calendar'] = emergency_events
-                            st.success("Emergency calendar activated!")
-                    else:
-                        st.warning("No emergency events for the next 2 weeks")
+# Initialize FMP API client
+try:
+    FMP_API_KEY = st.secrets["fmp"]["api_key"]
+except (KeyError, FileNotFoundError):
+    st.error("Financial Modeling Prep (FMP) API key not found. Please add it to secrets.", icon="🚨")
+    FMP_API_KEY = None
 
-def display_month_end_status():
-    """Display month-end specific status and warnings"""
+
+# --- CONSTANTS ---
+# Trading Plan Constants
+PLANNER_DB_NAME = "DailyTradingPlanner"
+PLANNER_COLLECTION_NAME = "economic_events"
+MORNING_CUTOFF = time(12, 0)
+AFTERNOON_NO_TRADE_START = time(13, 55)
+NO_TRADE_KEYWORDS = ['FOMC Statement', 'FOMC Press Conference', 'Interest Rate Decision', 'Monetary Policy Report']
+FORCED_HIGH_IMPACT_KEYWORDS = ['Powell Speaks', 'Fed Chair', 'Non-Farm', 'NFP', 'CPI', 'Consumer Price Index', 'PPI', 'Producer Price Index', 'GDP']
+WIN_STREAK_THRESHOLD = 5
+
+# Headline Fetcher Constants
+HEADLINES_DB_NAME = "FinancialHeadlinesDB"
+HEADLINES_COLLECTION_NAME = "financial_headlines"
+FJ_HEADERS = {
+    "accept": "application/json, text/javascript, */*; q=0.01",
+    "accept-language": "en-GB,en-US;q=0.9,en;q=0.8", "content-type": "application/json; charset=utf-8",
+    "origin": "https://www.financialjuice.com", "referer": "https://www.financialjuice.com/",
+    "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36"
+}
+ENDPOINTS = {
+    "Market Moving": "https://live.financialjuice.com/FJService.asmx/Startup?info=%22EAAAAI4ZYmAf1rjepmLb8ipJWU1iQvw0uaAarVQAhywSenf44DiF46NikC62XrMQQuUMqNuMWWJCs%2F1Vbiko5Rkbzp3DfxVv7lIdhZBjaNs17T5e1[...]",
+    "Macro": "https://live.financialjuice.com/FJService.asmx/Startup?info=%22EAAAAFMvNnhJU6T1gy0VNauw6NzUkN9OyWCeN2VCALOWci%2FeYbMj1CtdvjVUNi2w7NRP%2F2yG1mLVauun4j%2BvsDoED47Njykc%2FgdnePCIJdbzXifXQC4[...]",
+    "Forex": "https://live.financialjuice.com/FJService.asmx/Startup?info=%22EAAAAPQekLn2SEBDIk3zUfnktXp0E11BXJu%2F43wDvDrCl8vIEZYOhtbq3eFsbPxtLkcSOOkjoDhWl510wyhW9wih%2BXFh44j2nnMZT9y%2Bm84PNVL5y164z[...]",
+    "Indices": "https://live.financialjuice.com/FJService.asmx/Startup?info=%22EAAAAH3X%2BtXBBdTBI65szkt%2BAvLV20qGtr0KlypTDpImciWq93l4oldNwUC0VrcW2Jzrs%2FzaZVw4ih3ztDZjoxAOJFkW3ubCdmN85AI5HRe%2BDOqUv[...]"
+}
+
+# --- ENHANCED CSS STYLES ---
+st.markdown("""
+<style>
+    /* Your existing CSS styles remain unchanged */
+    .stApp { background: linear-gradient(135deg, #0f1419 0%, #1a1f2e 100%); }
+    .main-plan-card { grid-column: span 2; padding: 1rem; border-radius: 12px; text-align: center; margin: 0.5rem 0; border: 2px solid; box-shadow: 0 4px 16px rgba(0,0,0,0.3); backdrop-filter: blur(10px); }
+    .main-plan-card::before { content: ''; position: absolute; top: 0; left: -100%; width: 100%; height: 100%; background: linear-gradient(90deg, transparent, rgba(255,255,255,0.1), transparent); transition: left 0.6s cubic-bezier(0.4,0,0.2,1); }
+    .main-plan-card:hover::before { left: 100%; }
+    .no-trade { background: linear-gradient(135deg, rgba(244, 67, 54, 0.15), rgba(183, 28, 28, 0.08)); border-color: #f44336; color: #ffcdd2; }
+    .news-day { background: linear-gradient(135deg, rgba(255, 152, 0, 0.15), rgba(239, 108, 0, 0.08)); border-color: #ff9800; color: #ffcc02; }
+    .standard-day { background: linear-gradient(135deg, rgba(76, 175, 80, 0.15), rgba(56, 142, 60, 0.08)); border-color: #4caf50; color: #a5d6a7; }
+    .quick-info-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 15px; margin: 20px 0; }
+    .info-card { background: rgba(255, 255, 255, 0.05); border: 1px solid rgba(255, 255, 255, 0.1); border-radius: 12px; padding: 1rem; text-align: center; backdrop-filter: blur(10px); transition: all 0.3s ease; }
+    .info-card:hover { transform: translateY(-5px); box-shadow: 0 8px 25px rgba(0,0,0,0.3); border-color: rgba(255, 255, 255, 0.2); }
+    .info-card .metric-label { color: #94a3b8; font-size: 0.85rem; font-weight: 500; margin-bottom: 8px; }
+    .info-card .metric-value { color: #ffffff; font-size: 1.4rem; font-weight: 700; text-shadow: 0 2px 4px rgba(0,0,0,0.3); }
+    .risk-output { padding: 0.8rem; border-radius: 8px; text-align: center; color: white; font-weight: bold; font-size: 1.1rem; margin: 10px 0; box-shadow: 0 2px 8px rgba(0,0,0,0.2); transition: all 0.3s ease; }
+    .risk-output:hover { transform: scale(1.02); }
+    .risk-normal { background: linear-gradient(135deg, #3182CE, #2c5aa0); }
+    .risk-defensive { background: linear-gradient(135deg, #DD6B20, #c05621); }
+    .risk-minimum { background: linear-gradient(135deg, #E53E3E, #c53030); }
+    .risk-passed { background: linear-gradient(135deg, #38A169, #2f855a); }
+    .event-compact { display: flex; align-items: center; padding: 0.5rem 0.75rem; margin: 0.25rem 0; border-radius: 8px; background: rgba(255, 255, 255, 0.03); border-left: 4px solid; font-size: 0.9rem; }
+    .event-compact:hover { background: rgba(255, 255, 255, 0.08); transform: translateX(5px); }
+    .event-high { border-left-color: #ef4444; background: rgba(239, 68, 68, 0.1); }
+    .event-medium { border-left-color: #f59e0b; background: rgba(245, 158, 11, 0.1); }
+    .event-low { border-left-color: #10b981; background: rgba(16, 185, 129, 0.1); }
+    .event-time { min-width: 80px; font-weight: 600; color: #60a5fa; }
+    .event-currency { min-width: 45px; font-weight: 700; text-align: center; }
+    .event-currency.usd { color: #fbbf24; text-shadow: 0 0 10px rgba(251, 191, 36, 0.5); }
+    .action-section { background: linear-gradient(135deg, rgba(17, 24, 39, 0.8), rgba(31, 41, 55, 0.6)); border: 1px solid rgba(75, 85, 99, 0.3); border-radius: 12px; padding: 1.5rem; margin: 20px 0; }
+    .action-item { display: flex; align-items: center; padding: 0.75rem; margin: 0.5rem 0; background: rgba(255, 255, 255, 0.03); border-left: 4px solid #06b6d4; border-radius: 8px; transition: all 0.3s ease; }
+    .action-item:hover { background: rgba(255, 255, 255, 0.08); border-left-color: #0891b2; }
+    .action-emoji { font-size: 1.2rem; margin-right: 12px; min-width: 30px; }
+    .stTabs [data-baseweb="tab-list"] { gap: 8px; background: rgba(30, 41, 59, 0.5); border-radius: 12px; padding: 4px; }
+    .stTabs [data-baseweb="tab"] { background: rgba(255, 255, 255, 0.05); border-radius: 8px; color: #94a3b8; border: none; padding: 0.75rem 1.5rem; }
+    .stTabs [aria-selected="true"] { background: linear-gradient(135deg, #3b82f6, #1e40af) !important; color: white !important; }
+    .stButton button { background: linear-gradient(135deg, #3b82f6, #1e40af); border: none; border-radius: 12px; color: white; font-weight: 600; padding: 0.75rem 2rem; transition: all 0.3s ease; box-shadow: 0 4px 16px rgba(59, 130, 246, 0.4); }
+    .stButton button:hover { transform: translateY(-2px); box-shadow: 0 8px 25px rgba(59, 130, 246, 0.4); }
+    h1 { color: #f1f5f9; text-shadow: 0 2px 4px rgba(0,0,0,0.3); }
+    h2 { color: #e2e8f0; margin-bottom: 1rem; }
+    h3 { color: #cbd5e1; }
+    .weekend-notice { background: linear-gradient(135deg, rgba(99, 102, 241, 0.2), rgba(67, 56, 202, 0.1)); border: 2px solid #6366f1; border-radius: 16px; padding: 2rem; text-align: center; color: #c7d2fe; }
+    .week-day-card { background: rgba(255, 255, 255, 0.05); border: 1px solid rgba(255, 255, 255, 0.1); border-radius: 12px; padding: 1rem; margin: 0.5rem 0; }
+</style>
+""", unsafe_allow_html=True)
+
+# --- DATABASE & UTILITY FUNCTIONS (SHARED) ---
+@st.cache_resource
+def init_connection():
+    try:
+        connection_string = st.secrets["mongo"]["connection_string"]
+        client = pymongo.MongoClient(connection_string)
+        client.admin.command('ping') # Test connection
+        return client
+    except Exception as e:
+        st.error(f"Failed to connect to MongoDB. Error: {e}", icon="🔥")
+        return None
+
+# --- TIME/DATE HELPERS ---
+def get_current_market_time(): return datetime.now(pytz.timezone('US/Eastern'))
+def parse_date(date_str):
+    try: return datetime.strptime(str(date_str).strip(), '%d/%m/%Y').date()
+    except (ValueError, TypeError): return None
+def time_until_market_open():
+    et = pytz.timezone('US/Eastern')
+    now = datetime.now(et)
+    market_open = now.replace(hour=9, minute=30, second=0, microsecond=0)
+    if now.time() > time(16, 0): market_open += timedelta(days=1)
+    if now.weekday() >= 5: market_open += timedelta(days=(7 - now.weekday()))
+    return market_open - now
+def parse_time(time_str):
+    if not time_str or pd.isna(time_str) or str(time_str).lower() in ['empty', '']: return None
+    for fmt in ('%I:%M%p', '%I:%M %p', '%H:%M'):
+        try: return datetime.strptime(str(time_str).strip(), fmt).time()
+        except ValueError: continue
+    return None
+def parse_impact(impact_str):
+    if not impact_str or pd.isna(impact_str): return "Low"
+    lower = str(impact_str).lower()
+    if 'high' in lower: return "High"
+    if 'medium' in lower: return "Medium"
+    return "Low"
+def parse_headline_datetime(dt_str):
+    formats = ["%Y-%m-%dT%H:%M:%S.%f", "%Y-%m-%dT%H:%M:%S", "%Y-%m-%d %H:%M:%S", "%m/%d/%Y %H:%M:%S"]
+    for fmt in formats:
+        try: return datetime.strptime(dt_str, fmt)
+        except (ValueError, TypeError): continue
+    return None
+
+# --- NEW: ECONOMIC CALENDAR API FETCHER ---
+def fetch_and_store_economic_events():
+    """
+    Fetches economic calendar data for the current and next month from FMP API,
+    transforms it, and stores it in MongoDB, solving the end-of-month issue.
+    """
+    if not FMP_API_KEY:
+        st.sidebar.error("FMP API key not configured.")
+        return False
+
+    mongo_client = init_connection()
+    if not mongo_client:
+        st.sidebar.error("MongoDB connection failed.")
+        return False
+
+    # Define date range: from the first day of the current month to the last day of the next month
     today = date.today()
-    
-    # Calculate month-end metrics
-    next_month = today.replace(day=28) + timedelta(days=4)
-    month_end = next_month - timedelta(days=next_month.day)
-    days_to_month_end = (month_end - today).days
-    
-    first_of_month = today.replace(day=1)
-    days_from_month_start = (today - first_of_month).days
-    
-    st.sidebar.subheader("📅 Month-End Status")
-    
-    if days_to_month_end <= 3:
-        st.sidebar.error(f"⚠️ {days_to_month_end} days to month-end")
-        st.sidebar.markdown("**Expected Issues:**")
-        st.sidebar.markdown("- API token expiration")
-        st.sidebar.markdown("- Slower website responses") 
-        st.sidebar.markdown("- Increased anti-bot measures")
-        
-    elif days_from_month_start <= 2:
-        st.sidebar.warning(f"⚠️ {days_from_month_start} days into new month")
-        st.sidebar.markdown("**Potential Issues:**")
-        st.sidebar.markdown("- Calendar pagination changes")
-        st.sidebar.markdown("- New API rate limits")
-        
-    else:
-        st.sidebar.success("✅ Normal period")
-    
-    # Show next critical dates
-    monitor = DataHealthMonitor()
-    next_nfp = monitor.backup_provider.estimate_next_nfp_date()
-    next_cpi = monitor.backup_provider.estimate_next_cpi_date()
-    
-    st.sidebar.markdown("**Next Key Events:**")
-    st.sidebar.markdown(f"📊 NFP: {next_nfp.strftime('%b %d')}")
-    st.sidebar.markdown(f"📈 CPI: {next_cpi.strftime('%b %d')}")
+    from_date = today.replace(day=1)
+    to_date = today + relativedelta(months=2)
+    to_date = to_date.replace(day=1) - timedelta(days=1)
 
-# Integration function for your main app
-def enhanced_main_with_monitoring():
-    """
-    Enhanced main function with health monitoring
-    """
+    url = f"https://financialmodelingprep.com/api/v3/economic_calendar?from={from_date}&to={to_date}&apikey={FMP_API_KEY}"
+
+    try:
+        response = requests.get(url, timeout=15)
+        response.raise_for_status()
+        data = response.json()
+
+        if not data:
+            st.sidebar.warning("API returned no economic events for the period.")
+            return True # Success, but no data
+
+        # Transform data to match the app's expected format
+        et = pytz.timezone('US/Eastern')
+        transformed_events = []
+        for event in data:
+            try:
+                # API provides UTC time, convert to ET
+                event_dt_utc = datetime.fromisoformat(event['date'].replace('Z', '+00:00'))
+                event_dt_et = event_dt_utc.astimezone(et)
+                
+                transformed_events.append({
+                    "date": event_dt_et.strftime("%d/%m/%Y"),
+                    "time": event_dt_et.strftime("%I:%M%p"),
+                    "currency": event.get("currency", "N/A"),
+                    "event": event.get("event", "Unnamed Event"),
+                    "impact": event.get("importance", "Low")
+                })
+            except (ValueError, TypeError):
+                continue # Skip events with malformed dates
+        
+        # Store in MongoDB
+        db = mongo_client[PLANNER_DB_NAME]
+        collection = db[PLANNER_COLLECTION_NAME]
+        
+        # Clear old data and insert new data
+        collection.delete_many({})
+        if transformed_events:
+            collection.insert_many(transformed_events)
+        
+        st.sidebar.success(f"✅ Fetched {len(transformed_events)} events!")
+        return True
+
+    except requests.RequestException as e:
+        st.sidebar.error(f"API request failed: {e}")
+        return False
+    except Exception as e:
+        st.sidebar.error(f"An error occurred: {e}")
+        return False
+
+
+# --- HEADLINE FETCHER FUNCTIONS (Unchanged) ---
+@st.cache_data(ttl=300)
+def summarize_headline(text):
+    if not text or not client: return "OpenAI client not available."
+    prompt = f"You are a financial news analyst. Summarize this headline in one sentence, highlighting the market sentiment (e.g., bullish, bearish, hawkish, dovish) and naming the primary assets affected: \"{text}\""
+    try:
+        response = client.chat.completions.create(
+            model="gpt-4o", messages=[{"role": "user", "content": prompt}], max_tokens=100, temperature=0.5,
+        )
+        return response.choices[0].message.content.strip()
+    except Exception as e: return f"Error generating summary: {e}"
+
+def store_headline_in_mongodb(item, summary):
+    mongo_client = init_connection()
+    if not mongo_client: return
+    db = mongo_client[HEADLINES_DB_NAME]
+    collection = db[HEADLINES_COLLECTION_NAME]
+    headline_doc = {
+        "newsId": item.get("NewsID"), "title": item.get("Title"),
+        "fullText": item.get("HeadlineText"), "publishedDate": parse_headline_datetime(item.get("DatePublished", "")),
+        "category": item.get("Category", "Unknown"), "url": item.get("EURL"), "summary": summary,
+        "lastUpdated": datetime.utcnow()
+    }
+    try:
+        collection.update_one({"newsId": headline_doc["newsId"]}, {"$set": headline_doc}, upsert=True)
+    except Exception as e: st.error(f"Failed to write headline to MongoDB: {e}")
+
+def fetch_headlines_from_endpoint(category, url, limit=5):
+    headlines = []
+    try:
+        response = requests.get(url, headers=FJ_HEADERS, timeout=10)
+        response.raise_for_status()
+        data = response.json()
+        if isinstance(data, str): data = json.loads(data)
+        news_data = data.get("d", {});
+        if isinstance(news_data, str): news_data = json.loads(news_data)
+        for item in news_data.get("News", []):
+            if isinstance(item, dict):
+                item["Category"] = category
+                item["ParsedDate"] = parse_headline_datetime(item.get("DatePublished", ""))
+                headlines.append(item)
+                if len(headlines) >= limit: break
+    except Exception as e: st.toast(f"Could not fetch data for {category}: {e}", icon="⚠️")
+    return headlines
+
+def fetch_and_process_all_headlines(headlines_per_endpoint=5):
+    all_headlines = []
+    progress_bar = st.progress(0, text="Initializing...")
+    total_endpoints = len(ENDPOINTS)
+    for i, (category, url) in enumerate(ENDPOINTS.items()):
+        progress_bar.progress((i + 1) / total_endpoints, text=f"Fetching {category} headlines...")
+        headlines = fetch_headlines_from_endpoint(category, url, headlines_per_endpoint)
+        for item in headlines:
+            headline_text = item.get("HeadlineText") or item.get("Title") or ""
+            summary = summarize_headline(headline_text)
+            store_headline_in_mongodb(item, summary)
+            all_headlines.append({**item, "Summary": summary})
+    progress_bar.empty()
+    all_headlines.sort(key=lambda x: x.get("ParsedDate", datetime.min) or datetime.min, reverse=True)
+    return all_headlines
+
+@st.cache_data(ttl=600)
+def get_headlines_from_db(limit=50):
+    client = init_connection();
+    if client is None: return []
+    db = client[HEADLINES_DB_NAME]
+    collection = db[HEADLINES_COLLECTION_NAME]
+    items = list(collection.find({}, {'_id': 0}).sort("publishedDate", -1).limit(limit))
+    return items
+
+# --- TRADING PLAN FUNCTIONS (Unchanged) ---
+@st.cache_data(ttl=3600)
+def get_earnings_data(date_str):
+    url = f"https://www.earningswhispers.com/api/caldata/{date_str}"
+    headers = {'User-Agent': 'Mozilla/5.0'}
+    try:
+        response = requests.get(url, headers=headers, timeout=10)
+        response.raise_for_status()
+        return response.json()
+    except (requests.RequestException, ValueError): return None
+
+@st.cache_data(ttl=3600)
+def fetch_and_format_earnings(target_date):
+    date_str = target_date.strftime('%Y%m%d')
+    data = get_earnings_data(date_str)
+    if data: return [{'company': item.get('company', 'N/A')} for item in data]
+    return []
+
+@st.cache_data(ttl=600)
+def get_events_from_db():
+    client = init_connection()
+    if client is None: return pd.DataFrame()
+    db = client[PLANNER_DB_NAME]
+    collection = db[PLANNER_COLLECTION_NAME]
+    items = list(collection.find({}, {'_id': 0}))
+    return pd.DataFrame(items) if items else pd.DataFrame()
+
+@st.cache_data(ttl=3600)
+def analyze_seasonal_bias(symbol: str, target_date_str: str, lookback_years: int = 25):
+    try:
+        target_date = pd.to_datetime(target_date_str)
+        data = yf.download(symbol, start=target_date - pd.DateOffset(years=lookback_years), end=datetime.now(), interval='1wk', progress=False, auto_adjust=True)
+        if data.empty: return None, None
+        data['Week'] = data.index.isocalendar().week
+        week_data = data[data['Week'] == target_date.isocalendar().week].copy()
+        if week_data.empty: return None, None
+        week_data['Return'] = (week_data['Close'] - week_data['Open']) / week_data['Open']
+        results = []
+        for lookback in [lookback_years, 10]:
+            subset = week_data.last(f'{lookback}Y')
+            if subset.empty: continue
+            avg_return = subset['Return'].mean()
+            std_dev = subset['Return'].std()
+            positive_weeks = (subset['Return'] > 0).sum()
+            total_weeks = len(subset)
+            percent_positive = positive_weeks / total_weeks if total_weeks > 0 else 0
+            results.append({
+                'Lookback': f'Last {lookback} Years', 'Seasonal Bias': get_seasonal_bias_label(avg_return, percent_positive, std_dev),
+                'Avg Weekly Return': f"{avg_return:.2%}", '% Positive Weeks': f"{percent_positive:.2%}", 'Observations': f"{positive_weeks}/{total_weeks}"
+            })
+        return pd.DataFrame(results).set_index('Lookback'), week_data[['Return']].rename(columns={'Return': 'Weekly Return'})
+    except Exception: return None, None
+def get_seasonal_bias_label(avg_return: float, percent_positive: float, std_dev: float) -> str:
+    if pd.isna(std_dev) or std_dev == 0: std_dev = 0.01
+    STRONG_RETURN, STRONG_WIN, WEAK_WIN, NEUTRAL_UP, NEUTRAL_LOW = std_dev, 0.66, 0.33, 0.55, 0.45
+    if avg_return > STRONG_RETURN and percent_positive >= STRONG_WIN: return "Strongly Bullish"
+    if avg_return < -STRONG_RETURN and percent_positive <= WEAK_WIN: return "Strongly Bearish"
+    if avg_return > 0 and percent_positive > NEUTRAL_UP: return "Bullish"
+    if avg_return < 0 and percent_positive < NEUTRAL_LOW: return "Bearish"
+    return "Neutral / Inconclusive"
+def analyze_day_events(target_date, events):
+    plan, reason = "Standard Day Plan", "No high-impact USD news found. Proceed with the Standard Day Plan."
+    has_high_impact_usd_event, morning_events, afternoon_events, all_day_events = False, [], [], []
+    for event in events:
+        event_time = parse_time(event.get('time', ''))
+        event_name, currency = event.get('event', ''), event.get('currency', '').strip().upper()
+        parsed_impact = parse_impact(event.get('impact', ''))
+        is_forced_high = any(k.lower() in event_name.lower() for k in FORCED_HIGH_IMPACT_KEYWORDS)
+        is_high_impact = (parsed_impact == 'High') or is_forced_high
+        display_impact = "High (Forced)" if is_forced_high and parsed_impact != 'High' else ("High" if is_high_impact else parsed_impact)
+        event_details = {'name': event_name, 'currency': currency, 'impact': display_impact, 'time': event_time.strftime('%I:%M %p') if event_time else 'All Day', 'raw_time': event_time}
+        if event_time is None: all_day_events.append(event_details)
+        elif event_time < MORNING_CUTOFF: morning_events.append(event_details)
+        else: afternoon_events.append(event_details)
+        if currency == 'USD':
+            if any(k.lower() in event_name.lower() for k in NO_TRADE_KEYWORDS):
+                if event_time and event_time >= AFTERNOON_NO_TRADE_START:
+                    return "No Trade Day", f"Critical afternoon USD event '{event_name}' at {event_time.strftime('%I:%M %p')}.", morning_events, afternoon_events, all_day_events
+            if is_high_impact and event_time: has_high_impact_usd_event = True
+    if has_high_impact_usd_event:
+        plan, reason = "News Day Plan", "High-impact USD news detected. The News Day Plan is active."
+    return plan, reason, morning_events, afternoon_events, all_day_events
+
+# --- UI COMPONENTS (Unchanged) ---
+def display_header_dashboard():
+    current_time, time_to_open = get_current_market_time(), time_until_market_open()
+    st.markdown('<div class="quick-info-grid">', unsafe_allow_html=True)
+    col1, col2, col3, col4 = st.columns(4)
+    with col1: st.markdown(f'<div class="info-card"><div class="metric-label">Current ET Time</div><div class="metric-value">{current_time.strftime("%I:%M %p")}</div></div>', unsafe_allow_html=True)
+    with col2:
+        if time_to_open.total_seconds() > 0:
+            h, rem = divmod(int(time_to_open.total_seconds()), 3600); m, _ = divmod(rem, 60)
+            display, label = f"{h}h {m}m", "Time to Open"
+        else: display, label = ("OPEN" if current_time.time() < time(16, 0) else "CLOSED"), "Market Status"
+        st.markdown(f'<div class="info-card"><div class="metric-label">{label}</div><div class="metric-value">{display}</div></div>', unsafe_allow_html=True)
+    with col3: st.markdown(f'<div class="info-card"><div class="metric-label">Current Session</div><div class="metric-value">{get_current_session(current_time)}</div></div>', unsafe_allow_html=True)
+    with col4: st.markdown(f'<div class="info-card"><div class="metric-label">Trading Day</div><div class="metric-value">{date.today().strftime("%A")}</div></div>', unsafe_allow_html=True)
+    st.markdown('</div>', unsafe_allow_html=True)
+def get_current_session(current_time):
+    current = current_time.time()
+    if time(2, 0) <= current < time(5, 0): return "London"
+    elif time(9, 30) <= current < time(12, 0): return "NY Morning"
+    elif time(12, 0) <= current < time(13, 30): return "NY Lunch"
+    elif time(13, 30) <= current < time(16, 0): return "NY Afternoon"
+    else: return "Pre-Market"
+def display_sidebar_risk_management():
+    st.sidebar.header("🧠 Risk Management")
+    if 'standard_risk' not in st.session_state: st.session_state.standard_risk = 300
+    if 'current_balance' not in st.session_state: st.session_state.current_balance = 2800
+    if 'streak' not in st.session_state: st.session_state.streak = 5
+    if 'eval_target' not in st.session_state: st.session_state.eval_target = 6000
+    st.session_state.current_balance = st.sidebar.number_input("Current Profit ($)", value=st.session_state.current_balance, step=50, key="risk_balance")
+    st.session_state.streak = st.sidebar.number_input("Win/Loss Streak", value=st.session_state.streak, step=1, key="risk_streak")
+    st.session_state.standard_risk = st.sidebar.number_input("Standard Risk ($)", value=st.session_state.standard_risk, step=10, key="risk_standard")
+    profit_loss = st.session_state.current_balance
+    if profit_loss <= 0: suggested_risk, reason, risk_class = st.session_state.standard_risk / 2, "Account in drawdown. Minimum Risk.", "risk-minimum"
+    elif st.session_state.streak < 0: suggested_risk, reason, risk_class = st.session_state.standard_risk / 2, f"{abs(st.session_state.streak)}-trade losing streak. Minimum Risk.", "risk-minimum"
+    elif st.session_state.streak >= WIN_STREAK_THRESHOLD: suggested_risk, reason, risk_class = st.session_state.standard_risk / 2, f"{st.session_state.streak}-win streak. Defensive Risk.", "risk-defensive"
+    elif profit_loss >= st.session_state.eval_target: suggested_risk, reason, risk_class = 0, "Target reached! Stop trading.", "risk-passed"
+    else: suggested_risk, reason, risk_class = st.session_state.standard_risk, "Standard operating conditions.", "risk-normal"
+    st.sidebar.markdown(f'<div class="risk-output {risk_class}"><strong>Next Trade Risk: ${int(suggested_risk)}</strong><br><small>{reason}</small></div>', unsafe_allow_html=True)
+def display_sidebar_payout_planner():
+    st.sidebar.header("💰 Payout Planner")
+    if 'payout_balance' not in st.session_state: st.session_state.payout_balance = 10000
+    if 'payout_target' not in st.session_state: st.session_state.payout_target = 15000
+    if 'monthly_payout' not in st.session_state: st.session_state.monthly_payout = 2000
+    st.session_state.payout_balance = st.sidebar.number_input("Current Balance ($)", value=st.session_state.payout_balance, step=100)
+    st.session_state.payout_target = st.sidebar.number_input("Next Payout Target ($)", value=st.session_state.payout_target, step=500)
+    st.session_state.monthly_payout = st.sidebar.number_input("Monthly Payout Goal ($)", value=st.session_state.monthly_payout, step=100)
+    remaining = st.session_state.payout_target - st.session_state.payout_balance
+    progress_pct = (st.session_state.payout_balance / st.session_state.payout_target) * 100 if st.session_state.payout_target > 0 else 0
+    st.sidebar.progress(min(progress_pct / 100, 1.0))
+    col1, col2, col3 = st.sidebar.columns(3)
+    col1.metric("Remaining", f"${remaining:,.0f}")
+    col2.metric("Progress", f"{progress_pct:.1f}%")
+    col3.metric("Daily Target", f"${st.session_state.monthly_payout / 22:.0f}")
+def display_main_plan_card(plan, reason):
+    if plan == "No Trade Day": card_class, icon, title = "no-trade", "🚫", "NO TRADE DAY"
+    elif plan == "News Day Plan": card_class, icon, title = "news-day", "📰", "NEWS DAY PLAN"
+    else: card_class, icon, title = "standard-day", "✅", "STANDARD DAY PLAN"
+    st.markdown(f'<div class="main-plan-card {card_class}"><h1 style="font-size: 1.8rem; margin: 0;">{icon}</h1><h2 style="margin: 0.3rem 0; font-size: 1.4rem;">{title}</h2><p style="font-size: 1rem; margin: 0.5rem 0 0 0; opacity: 0.9;">{reason}</p></div>', unsafe_allow_html=True)
+def display_compact_events(morning_events, afternoon_events, all_day_events):
+    if not any([morning_events, afternoon_events, all_day_events]): st.info("📅 No economic events scheduled for today."); return
+    tabs = st.tabs(["🌅 Morning", "🌇 Afternoon", "📅 All Day"] if all_day_events else ["🌅 Morning", "🌇 Afternoon"])
+    with tabs[0]:
+        if morning_events:
+            for e in sorted([ev for ev in morning_events if ev['raw_time']], key=lambda x: x['raw_time']):
+                impact_class = "event-high" if "High" in e['impact'] else "event-medium" if "Medium" in e['impact'] else "event-low"
+                st.markdown(f'<div class="event-compact {impact_class}"><div class="event-time">{e["time"]}</div><div class="event-currency { "usd" if e["currency"] == "USD" else ""}">{e["currency"]}</div><div style="flex: 1; margin-left: 15px;">{e["name"]}</div></div>', unsafe_allow_html=True)
+        else: st.markdown("*No morning events*")
+    with tabs[1]:
+        if afternoon_events:
+            for e in sorted([ev for ev in afternoon_events if ev['raw_time']], key=lambda x: x['raw_time']):
+                impact_class = "event-high" if "High" in e['impact'] else "event-medium" if "Medium" in e['impact'] else "event-low"
+                st.markdown(f'<div class="event-compact {impact_class}"><div class="event-time">{e["time"]}</div><div class="event-currency { "usd" if e["currency"] == "USD" else ""}">{e["currency"]}</div><div style="flex: 1; margin-left: 15px;">{e["name"]}</div></div>', unsafe_allow_html=True)
+        else: st.markdown("*No afternoon events*")
+def display_action_checklist(plan):
+    st.markdown('<div class="action-section"><h3>🎯 Action Items</h3>', unsafe_allow_html=True)
+    if plan == "News Day Plan": actions = [("🚫", "DO NOT trade morning session"), ("📊", "Mark NY Lunch Range"), ("👀", "Wait for liquidity raid after news"), ("🎯", "Prime entry: 2:00 PM - 3:00 PM"), ("✅", "Enter on MSS + FVG confirmation")]
+    elif plan == "Standard Day Plan": actions = [("📈", "Mark Previous Day PM Range"), ("🌍", "Mark London Session Range"), ("👀", "Watch NY Open Judas Swing"), ("🎯", "Prime entry: 10:00 AM - 11:00 AM"), ("✅", "Enter after sweep with MSS + FVG")]
+    else: actions = [("🚫", "Stand aside completely"), ("💰", "Preserve capital"), ("📚", "Journal and review"), ("🧘", "Prepare for next trading day")]
+    for emoji, text in actions: st.markdown(f'<div class="action-item"><div class="action-emoji">{emoji}</div><div>{text}</div></div>', unsafe_allow_html=True)
+    st.markdown('</div>', unsafe_allow_html=True)
+def display_seasonality_analysis(symbol, target_date):
+    st.markdown("### 🗓️ Weekly Seasonal Bias")
+    summary_df, detailed_df = analyze_seasonal_bias(symbol=symbol, target_date_str=target_date.strftime('%Y-%m-%d'))
+    if summary_df is not None:
+        st.markdown(f"Historical performance for the calendar week of **{target_date.strftime('%B %d')}** for **${symbol}**.")
+        st.dataframe(summary_df, use_container_width=True)
+        with st.expander("Show Detailed Yearly Returns"): st.dataframe(detailed_df, use_container_width=True, height=400)
+    else: st.info(f"Could not retrieve seasonal data for {symbol}.")
+def display_week_view(selected_date, records):
+    st.markdown("### 📅 Week Overview")
+    start_of_week = selected_date - timedelta(days=selected_date.weekday())
+    week_days = [start_of_week + timedelta(days=i) for i in range(5)]
+    for day in week_days:
+        day_events = [row for row in records if parse_date(row.get('date', '')) == day]
+        plan, reason, _, _, _ = analyze_day_events(day, day_events) if day_events else ("Standard Day Plan", "No economic events scheduled", [], [], [])
+        if plan == "No Trade Day": card_style, emoji = "border-left: 4px solid #f44336; background: rgba(244, 67, 54, 0.1);", "🚫"
+        elif plan == "News Day Plan": card_style, emoji = "border-left: 4px solid #ff9800; background: rgba(255, 152, 0, 0.1);", "📰"
+        else: card_style, emoji = "border-left: 4px solid #4caf50; background: rgba(76, 175, 80, 0.1);", "✅"
+        st.markdown(f'<div class="week-day-card" style="{card_style}"><h4>{emoji} {day.strftime("%A, %B %d")} - {plan}</h4><p style="margin:0.5rem 0; font-size:0.9rem; opacity:0.8;">{reason}</p></div>', unsafe_allow_html=True)
+        earnings = fetch_and_format_earnings(day)
+        if earnings:
+            with st.expander(f"💰 Earnings Reports ({len(earnings)})"): st.write(", ".join([item['company'] for item in earnings]))
+        high_impact = [e for e in day_events if parse_impact(e.get('impact', '')) == 'High' or any(k.lower() in e.get('event', '').lower() for k in FORCED_HIGH_IMPACT_KEYWORDS)]
+        if high_impact:
+            with st.expander(f"🚨 High Impact Events ({len(high_impact)})"):
+                for event in high_impact: st.markdown(f"• **{parse_time(event.get('time', '')).strftime('%I:%M %p') if parse_time(event.get('time', '')) else 'All Day'}** - {event.get('currency', '')} - {event.get('event', '')}")
+
+# --- HEADLINES TAB UI (Unchanged) ---
+def display_headlines_tab():
+    st.header("🌍 GEO: Financial Headlines Aggregator")
+    st.write("Fetches and summarizes the latest market-moving news with AI.")
+    if st.button("📡 Fetch & Summarize Latest Headlines", type="primary"):
+        with st.spinner("Fetching headlines, this may take a moment..."):
+            st.session_state.headlines = fetch_and_process_all_headlines()
+    if 'headlines' not in st.session_state:
+        st.session_state.headlines = get_headlines_from_db()
+    if st.session_state.get('headlines'):
+        st.success(f"Displaying {len(st.session_state.headlines)} headlines.")
+        st.markdown("---")
+        for item in st.session_state.headlines:
+            title = item.get("title", "No Title")
+            summary = item.get("summary", "No summary available.")
+            url = item.get("url", "")
+            category = item.get("category", "N/A")
+            published_date = item.get("publishedDate") or item.get("ParsedDate")
+            with st.container(border=True):
+                st.markdown(f"##### {title}")
+                st.caption(f"**Category:** `{category}` | **Published:** {published_date.strftime('%Y-%m-%d %H:%M ET') if published_date else 'N/A'}")
+                st.info(f"**AI Summary:** {summary}")
+                if url:
+                    st.link_button("Read Full Article ↗️", url)
+    else:
+        st.info("No headlines loaded. Click the button to fetch the latest news.")
+
+
+# --- MAIN APPLICATION ---
+def main():
     st.title("📊 US Index Trading Dashboard")
+
+    # --- Sidebar ---
+    st.sidebar.title("Controls & Planning")
+    if st.sidebar.button("🔄 Fetch Economic Data", type="primary"):
+        with st.spinner("Fetching data from API..."):
+            success = fetch_and_store_economic_events()
+            if success:
+                st.cache_data.clear() # Clear all cached data
+                st.rerun()
     
-    # Add health monitoring tab
-    tab1, tab2, tab3, tab4 = st.tabs(["📈 Daily Plan", "🌍 Headlines", "🏥 Health", "📅 Emergency"])
-    
+    display_sidebar_risk_management()
+    st.sidebar.markdown("---")
+    display_sidebar_payout_planner()
+
+    # --- Main Page ---
+    display_header_dashboard()
+
+    tab1, tab2 = st.tabs(["📈 Daily Plan", "🌍 Headlines"])
+
     with tab1:
-        # Your existing daily plan code
-        display_month_end_status()  # Add to sidebar
-        # ... rest of your existing code
-        pass
+        col1, col2 = st.columns([2, 1])
+        with col1:
+            selected_date = st.date_input("📅 Analysis Date", value=date.today())
+        with col2:
+            view_mode = st.selectbox("View Mode", ["Today", "Week"], index=0)
+        
+        st.markdown("---")
+
+        if selected_date.weekday() >= 5:
+            st.markdown('<div class="weekend-notice"><h2>🏖️ Weekend Mode</h2><p>Markets are closed. Relax, review, and prepare for the week ahead!</p></div>', unsafe_allow_html=True)
+            return
+
+        df = get_events_from_db()
+        if df.empty:
+            st.warning("👋 No economic data found. Click **Fetch Economic Data** in the sidebar to load events.")
+            return
+
+        records = df.to_dict('records')
+        get_events_for = lambda d: [row for row in records if parse_date(row.get('date', '')) == d]
+
+        if view_mode == "Today":
+            events = get_events_for(selected_date)
+            plan, reason, morning, afternoon, allday = analyze_day_events(selected_date, events) if events else ("Standard Day Plan", "No economic events found.", [], [], [])
+            display_main_plan_card(plan, reason)
+            st.markdown("---")
+            display_seasonality_analysis('QQQ', selected_date)
+            
+            col1, col2 = st.columns([1, 1])
+            with col1:
+                display_action_checklist(plan)
+            with col2:
+                st.markdown("### 📅 Today's Events")
+                display_compact_events(morning, afternoon, allday)
+                st.markdown("### 💰 Today's Earnings")
+                earnings_today = fetch_and_format_earnings(selected_date)
+                if earnings_today:
+                    with st.container(height=250):
+                        for item in earnings_today: st.markdown(f"• **{item['company']}**")
+                else:
+                    st.markdown("*No major earnings reports scheduled.*")
+        else: # Week view
+            display_week_view(selected_date, records)
     
     with tab2:
-        # Your existing headlines code
-        pass
-    
-    with tab3:
-        display_health_dashboard()
-    
-    with tab4:
-        st.header("🚨 Emergency Calendar")
-        st.write("Use this when primary data sources are unavailable")
-        
-        backup_provider = BackupDataProvider()
-        emergency_events = backup_provider.generate_emergency_calendar()
-        
-        if emergency_events:
-            st.dataframe(pd.DataFrame(emergency_events))
-            
-            if st.button("🔄 Use Emergency Data"):
-                # Save emergency data to your database or session
-                st.session_state['using_emergency_data'] = True
-                st.success("Emergency calendar is now active!")
-        else:
-            st.info("No critical events in the next 2 weeks")
+        display_headlines_tab()
+
+if __name__ == "__main__":
+    main()
