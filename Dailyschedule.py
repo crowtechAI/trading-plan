@@ -466,75 +466,77 @@ def display_headlines_tab():
 
 # --- MAIN APPLICATION ---
 def main():
-    st.title("📊 US Index Trading Dashboard")
+    """Main function to run the scraper."""
+    parser = argparse.ArgumentParser(description="Scrape Forex Factory calendar.")
+    parser.add_argument("--month", type=str, help="Target month (e.g. June, July). Defaults to current month.")
+    parser.add_argument("--week", action="store_true", help="Only scrape current trading week (Mon-Fri).")
+    parser.add_argument("--output", default="latest_forex_data.csv", help="Output CSV filename.")
+    args = parser.parse_args()
 
-    # --- Sidebar ---
-    st.sidebar.title("Controls & Planning")
-    if st.sidebar.button("🔄 Fetch Economic Data", type="primary"):
-        with st.spinner("Fetching data from Forex Factory..."):
-            try:
-                subprocess.run([sys.executable, "ffscraper.py"], check=True, capture_output=True, text=True)
-                st.sidebar.success("✅ Economic Data Fetched!")
-                st.cache_data.clear() # Clear all cached data
-                st.rerun()
-            except Exception as e:
-                st.sidebar.error(f"❌ Update failed: {e}")
+    # --- REVISED LOGIC TO HANDLE MULTI-MONTH WEEKS ---
+
+    months_to_scrape = []
     
-    display_sidebar_risk_management()
-    st.sidebar.markdown("---")
-    display_sidebar_payout_planner()
+    if args.week:
+        # If --week is specified, we determine the exact month(s) to scrape.
+        week_start, week_end = get_current_week_range()
+        print(f"Targeting trading week: {week_start.strftime('%Y-%m-%d')} to {week_end.strftime('%Y-%m-%d')}")
 
-    # --- Main Page ---
-    display_header_dashboard()
-
-    tab1, tab2 = st.tabs(["📈 Daily Plan", "🌍 Headlines"])
-
-    with tab1:
-        col1, col2 = st.columns([2, 1])
-        with col1:
-            selected_date = st.date_input("📅 Analysis Date", value=date.today())
-        with col2:
-            view_mode = st.selectbox("View Mode", ["Today", "Week"], index=0)
+        # Add the starting month's parameter (e.g., 'jul')
+        months_to_scrape.append(week_start.strftime("%b").lower())
         
-        st.markdown("---")
+        # If the week spans two different months, add the ending month's parameter too.
+        if week_start.month != week_end.month:
+            print("Week spans two months. Will scrape both calendar pages.")
+            months_to_scrape.append(week_end.strftime("%b").lower())
 
-        if selected_date.weekday() >= 5:
-            st.markdown('<div class="weekend-notice"><h2>🏖️ Weekend Mode</h2><p>Markets are closed. Relax, review, and prepare for the week ahead!</p></div>', unsafe_allow_html=True)
-            return
+    elif args.month:
+        # If a specific month is given, just use that.
+        months_to_scrape.append(args.month.lower())
+    else:
+        # Default behavior: scrape the current month.
+        months_to_scrape.append("this")
 
-        df = get_events_from_db()
-        if df.empty:
-            st.warning("👋 No economic data found. Click **Fetch Economic Data** in the sidebar to load events.")
-            return
+    print(f"Calendar pages to scrape: {months_to_scrape}")
 
-        records = df.to_dict('records')
-        get_events_for = lambda d: [row for row in records if parse_date(row.get('date', '')) == d]
-
-        if view_mode == "Today":
-            events = get_events_for(selected_date)
-            plan, reason, morning, afternoon, allday = analyze_day_events(selected_date, events) if events else ("Standard Day Plan", "No economic events found.", [], [], [])
-            display_main_plan_card(plan, reason)
-            st.markdown("---")
-            display_seasonality_analysis('QQQ', selected_date)
+    all_events = []
+    driver = None
+    try:
+        driver = init_driver()
+        
+        # Loop through each required month and scrape its page
+        for month_param in months_to_scrape:
+            url = f"https://www.forexfactory.com/calendar?month={month_param}"
+            print(f"\nScraping URL: {url}")
             
-            col1, col2 = st.columns([1, 1])
-            with col1:
-                display_action_checklist(plan)
-            with col2:
-                st.markdown("### 📅 Today's Events")
-                display_compact_events(morning, afternoon, allday)
-                st.markdown("### 💰 Today's Earnings")
-                earnings_today = fetch_and_format_earnings(selected_date)
-                if earnings_today:
-                    with st.container(height=250):
-                        for item in earnings_today: st.markdown(f"• **{item['company']}**")
-                else:
-                    st.markdown("*No major earnings reports scheduled.*")
-        else: # Week view
-            display_week_view(selected_date, records)
-    
-    with tab2:
-        display_headlines_tab()
+            driver.get(url)
+            scroll_to_end(driver)
+            
+            # The week_filter flag ensures we only keep events from the target week,
+            # even when scraping a full month's page.
+            events_from_page = parse_table(driver, week_filter=args.week)
+            all_events.extend(events_from_page)
+        
+        if all_events:
+            # Remove potential duplicates if an event is somehow captured on both pages (unlikely but safe)
+            # This is more robustly handled by converting to a list of tuples, then back to a list of dicts.
+            unique_events = [dict(t) for t in {tuple(d.items()) for d in all_events}]
+            # Sort events chronologically, as combining pages can mix them up
+            unique_events.sort(key=lambda x: datetime.strptime(x['date'], "%d/%m/%Y"))
+
+            save_to_csv(unique_events, args.output)
+            print("\n=== Scraping completed successfully ===")
+        else:
+            print("\n--- No events were scraped. ---")
+
+    except KeyboardInterrupt:
+        print("\nScraping interrupted by user.")
+    except Exception as e:
+        print(f"\nAn unrecoverable error occurred: {str(e)}")
+    finally:
+        if driver:
+            driver.quit()
+            print("WebDriver closed successfully.")
 
 if __name__ == "__main__":
     main()
