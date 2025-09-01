@@ -11,6 +11,7 @@ import pymongo
 import requests
 import json
 from openai import OpenAI
+from bs4 import BeautifulSoup # <-- NEW IMPORT
 
 # --- CONFIGURATION ---
 st.set_page_config(
@@ -215,22 +216,48 @@ def get_headlines_from_db(limit=50):
     return items
 
 # --- TRADING PLAN FUNCTIONS ---
+
+# --- NEW: Corrected Earnings Report Functionality ---
 @st.cache_data(ttl=3600)
-def get_earnings_data(date_str):
-    url = f"https://www.earningswhispers.com/api/caldata/{date_str}"
-    headers = {'User-Agent': 'Mozilla/5.0'}
+def fetch_and_format_earnings(target_date):
+    """
+    Scrapes Yahoo Finance for earnings data for a specific date.
+    This replaces the old, broken API call.
+    """
+    date_str = target_date.strftime('%Y-%m-%d')
+    url = f"https://finance.yahoo.com/calendar/earnings?day={date_str}"
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+    }
+    earnings_list = []
     try:
         response = requests.get(url, headers=headers, timeout=10)
         response.raise_for_status()
-        return response.json()
-    except (requests.RequestException, ValueError): return None
+        
+        soup = BeautifulSoup(response.text, 'lxml')
+        
+        # Find the table containing the earnings data
+        table = soup.find('table', {'class': 'W(100%)'})
+        if not table:
+            return [] # No earnings table found for this day
 
-@st.cache_data(ttl=3600)
-def fetch_and_format_earnings(target_date):
-    date_str = target_date.strftime('%Y%m%d')
-    data = get_earnings_data(date_str)
-    if data: return [{'company': item.get('company', 'N/A')} for item in data]
-    return []
+        rows = table.find('tbody').find_all('tr')
+        
+        for row in rows:
+            cells = row.find_all('td')
+            if len(cells) > 2:
+                ticker = cells[0].find('a').text.strip()
+                company = cells[1].text.strip()
+                earnings_list.append({'ticker': ticker, 'company': company})
+                
+    except requests.RequestException as e:
+        st.toast(f"Error fetching earnings data: {e}", icon="⚠️")
+        return []
+    except Exception as e:
+        st.toast(f"Error parsing earnings data: {e}", icon="⚠️")
+        return []
+        
+    return earnings_list
 
 @st.cache_data(ttl=600)
 def get_events_from_db():
@@ -344,7 +371,7 @@ def display_sidebar_risk_management():
     elif profit_loss >= st.session_state.eval_target: suggested_risk, reason, risk_class = 0, "Target reached! Stop trading.", "risk-passed"
     else: suggested_risk, reason, risk_class = st.session_state.standard_risk, "Standard operating conditions.", "risk-normal"
 
-    st.sidebar.markdown(f'<div class="risk-output {risk_class}"><strong>Next Trade Risk: ${int(suggested_risk)}</strong><br><small>{reason}</small></div>', unsafe_allow_html=True)
+    st.sidebar.markdown(f'<div class="risk-output {risk_class}"><strong>Next Trade Risk: ${int(suggest_risk)}</strong><br><small>{reason}</small></div>', unsafe_allow_html=True)
 def display_sidebar_payout_planner():
     # This function remains unchanged
     st.sidebar.header("💰 Payout Planner")
@@ -419,7 +446,10 @@ def display_week_view(selected_date, records):
         st.markdown(f'<div class="week-day-card" style="{card_style}"><h4>{emoji} {day.strftime("%A, %B %d")} - {plan}</h4><p style="margin:0.5rem 0; font-size:0.9rem; opacity:0.8;">{reason}</p></div>', unsafe_allow_html=True)
         earnings = fetch_and_format_earnings(day)
         if earnings:
-            with st.expander(f"💰 Earnings Reports ({len(earnings)})"): st.write(", ".join([item['company'] for item in earnings]))
+            # --- UPDATED: Display richer earnings data ---
+            with st.expander(f"💰 Earnings Reports ({len(earnings)})"):
+                companies_str = ", ".join([f"{item['company']} ({item['ticker']})" for item in earnings])
+                st.write(companies_str)
         high_impact = [e for e in day_events if parse_impact(e.get('impact', '')) == 'High' or any(k.lower() in e.get('event', '').lower() for k in FORCED_HIGH_IMPACT_KEYWORDS)]
         if high_impact:
             with st.expander(f"🚨 High Impact Events ({len(high_impact)})"):
@@ -469,10 +499,15 @@ def main():
     if st.sidebar.button("🔄 Fetch Economic Data", type="primary"):
         with st.spinner("Fetching data from Forex Factory..."):
             try:
-                subprocess.run([sys.executable, "ffscraper.py"], check=True, capture_output=True, text=True)
+                # Use capture_output to see stdout/stderr from the script
+                result = subprocess.run([sys.executable, "ffscraper.py"], check=True, capture_output=True, text=True)
                 st.sidebar.success("✅ Economic Data Fetched!")
+                st.sidebar.code(result.stdout) # Show scraper output for debugging
                 st.cache_data.clear() # Clear all cached data
                 st.rerun()
+            except subprocess.CalledProcessError as e:
+                st.sidebar.error(f"❌ Scraper failed with exit code {e.returncode}")
+                st.sidebar.code(f"STDOUT:\n{e.stdout}\n\nSTDERR:\n{e.stderr}") # Show detailed error
             except Exception as e:
                 st.sidebar.error(f"❌ Update failed: {e}")
     
@@ -523,7 +558,9 @@ def main():
                 earnings_today = fetch_and_format_earnings(selected_date)
                 if earnings_today:
                     with st.container(height=250):
-                        for item in earnings_today: st.markdown(f"• **{item['company']}**")
+                         # --- UPDATED: Display richer earnings data ---
+                        for item in earnings_today:
+                            st.markdown(f"• **{item['company']}** `({item['ticker']})`")
                 else:
                     st.markdown("*No major earnings reports scheduled.*")
         else: # Week view
