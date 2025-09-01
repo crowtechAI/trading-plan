@@ -11,7 +11,6 @@ import pymongo
 import requests
 import json
 from openai import OpenAI
-from bs4 import BeautifulSoup # <-- NEW IMPORT
 
 # --- CONFIGURATION ---
 st.set_page_config(
@@ -27,7 +26,6 @@ try:
 except (KeyError, FileNotFoundError):
     st.error("OpenAI API key not found. Please add it to your Streamlit secrets.", icon="🚨")
     client = None
-
 
 # --- CONSTANTS ---
 # Trading Plan Constants
@@ -50,25 +48,24 @@ FJ_HEADERS = {
     "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36"
 }
 ENDPOINTS = {
-    "Market Moving": "https://live.financialjuice.com/FJService.asmx/Startup?info=%22EAAAAI4ZYmAf1rjepmLb8ipJWU1iQvw0uaAarVQAhywSenf44DiF46NikC62XrMQQuUMqNuMWWJCs%2F1Vbiko5Rkbzp3DfxVv7lIdhZBjaNs17T5e1XquGGOhSUVPACWc5MbCH0cEbNrp3r2TOzSI%2FdB3pvVHn7oH78Kw%2FGqYcosYhO%2BgjWmcZcidUZ6grwdpNivqa24NaxjeE%2BB0JqC%2B508s%2F6NUZcTeJJdgF6ivW0m7CGzOr5GfEllf%2F6OIH3kkmHdKEYpeVJz%2Bwn7%2BCrVZTNwbzS9sercXjKX8IXHTzvx%2F9tEciCO0V9OysMCxJOFzpIBPn1mCi6P0wqv4xCL7JViiLP4%3D%22&TimeOffset=1&tabID=10&oldID=0&TickerID=0&FeedCompanyID=0&strSearch=&extraNID=0",
-    "Macro": "https://live.financialjuice.com/FJService.asmx/Startup?info=%22EAAAAFMvNnhJU6T1gy0VNauw6NzUkN9OyWCeN2VCALOWci%2FeYbMj1CtdvjVUNi2w7NRP%2F2yG1mLVauun4j%2BvsDoED47Njykc%2FgdnePCIJdbzXifXQC4IQUNIgUI1%2F2cUZFv4T8Jhb4KgWXPjUpGCzdGob7zOSi%2FhOlVwbRWxRxdBTZTzKo1PbA4wTz7OcDO%2ByNTOOFJKW0YX4a0VU0946kfLse4RCSHVw9YhyZhVCQFPatMfJwvqbzvcB%2BeqOvBCLk%2BXu2%2FHuHnXh7Ab4ESaEzgMZIziCBCm0bbT0RCDj9MVTE%2BKbdXSIKWJMQegh16D18haDDx9qtxnVd0MXYkoPbml%2FCg%3D%22&TimeOffset=1&tabID=1&oldID=0&TickerID=0&FeedCompanyID=0&strSearch=&extraNID=0",
-    "Forex": "https://live.financialjuice.com/FJService.asmx/Startup?info=%22EAAAAPQekLn2SEBDIk3zUfnktXp0E11BXJu%2F43wDvDrCl8vIEZYOhtbq3eFsbPxtLkcSOOkjoDhWl510wyhW9wih%2BXFh44j2nnMZT9y%2Bm84PNVL5y164zL0FGFMGSzKyIkVW3gYNFOR8Hym4uYHucEBY%2FiwCzeosK61wt3R4mAw6XbFrRssKlZpE6Ln%2BJDXq5wOAoGmNxGu3F2QxpoyrPbQbewwMJ6rTZG%2BFXOckJyBOFFCe78dj2VNELy3soCEkJ9Vs6Ti6uiaahyJrsSoS29FRUGazVzk38F39naPqV99DSge2U0ePif98G4n5YpPn9QAGGRJxkt7bvJmLyEf%2BZF7nH0%3D%22&TimeOffset=1&tabID=5&oldID=0&TickerID=0&FeedCompanyID=0&strSearch=&extraNID=0",
-    "Indices": "https://live.financialjuice.com/FJService.asmx/Startup?info=%22EAAAAH3X%2BtXBBdTBI65szkt%2BAvLV20qGtr0KlypTDpImciWq93l4oldNwUC0VrcW2Jzrs%2FzaZVw4ih3ztDZjoxAOJFkW3ubCdmN85AI5HRe%2BDOqUvVxLTqV7TNgMkS2dNH01%2F79eaO9ynqrp%2B5HJs5WqGRkgUJgYHKGv4fGqJZAWAEYzqorLi1u2KEBf7oV6B%2Bgvl9gTD9GVl0O8nWj7r5NioKhfZdd%2FszNaMqLaKpJROV8RF%2FmhmZ5fZipRNBW0TZtfDsJBon5aL9PnAneWN4A2s3ecI1GOoB8kyMQtzen5GNicGD26LqzvSurQMDDswt4a8FMcz4YOslPfDD%2BjYgUYE4Q%3D%3D%22&TimeOffset=1&tabID=9&oldID=0&TickerID=0&FeedCompanyID=0&strSearch=&extraNID=0",
+    "Market Moving": "https://live.financialjuice.com/FJService.asmx/Startup?info=%22EAAAAI4ZYmAf1rjepmLb8ipJWU1iQvw0uaAarVQAhywSenf44DiF46NikC62XrMQQuUMqNuMWWJCs%2F1Vbiko5Rkbzp3DfxVv7lIdhZBjaNs17T5e1[...]",
+    "Macro": "https://live.financialjuice.com/FJService.asmx/Startup?info=%22EAAAAFMvNnhJU6T1gy0VNauw6NzUkN9OyWCeN2VCALOWci%2FeYbMj1CtdvjVUNi2w7NRP%2F2yG1mLVauun4j%2BvsDoED47Njykc%2FgdnePCIJdbzXifXQC4[...]",
+    "Forex": "https://live.financialjuice.com/FJService.asmx/Startup?info=%22EAAAAPQekLn2SEBDIk3zUfnktXp0E11BXJu%2F43wDvDrCl8vIEZYOhtbq3eFsbPxtLkcSOOkjoDhWl510wyhW9wih%2BXFh44j2nnMZT9y%2Bm84PNVL5y164z[...]",
+    "Indices": "https://live.financialjuice.com/FJService.asmx/Startup?info=%22EAAAAH3X%2BtXBBdTBI65szkt%2BAvLV20qGtr0KlypTDpImciWq93l4oldNwUC0VrcW2Jzrs%2FzaZVw4ih3ztDZjoxAOJFkW3ubCdmN85AI5HRe%2BDOqUv[...]"
 }
 
 # --- ENHANCED CSS STYLES ---
 st.markdown("""
 <style>
-    /* Add all your CSS from the original script here */
     .stApp { background: linear-gradient(135deg, #0f1419 0%, #1a1f2e 100%); }
-    .main-plan-card { grid-column: span 2; padding: 1rem; border-radius: 12px; text-align: center; margin: 0.5rem 0; border: 2px solid; box-shadow: 0 4px 16px rgba(0,0,0,0.3); backdrop-filter: blur(10px); position: relative; overflow: hidden; }
-    .main-plan-card::before { content: ''; position: absolute; top: 0; left: -100%; width: 100%; height: 100%; background: linear-gradient(90deg, transparent, rgba(255,255,255,0.1), transparent); transition: left 0.5s; }
+    .main-plan-card { grid-column: span 2; padding: 1rem; border-radius: 12px; text-align: center; margin: 0.5rem 0; border: 2px solid; box-shadow: 0 4px 16px rgba(0,0,0,0.3); backdrop-filter: blur(10px); }
+    .main-plan-card::before { content: ''; position: absolute; top: 0; left: -100%; width: 100%; height: 100%; background: linear-gradient(90deg, transparent, rgba(255,255,255,0.1), transparent); transition: left 0.6s cubic-bezier(0.4,0,0.2,1); }
     .main-plan-card:hover::before { left: 100%; }
     .no-trade { background: linear-gradient(135deg, rgba(244, 67, 54, 0.15), rgba(183, 28, 28, 0.08)); border-color: #f44336; color: #ffcdd2; }
     .news-day { background: linear-gradient(135deg, rgba(255, 152, 0, 0.15), rgba(239, 108, 0, 0.08)); border-color: #ff9800; color: #ffcc02; }
     .standard-day { background: linear-gradient(135deg, rgba(76, 175, 80, 0.15), rgba(56, 142, 60, 0.08)); border-color: #4caf50; color: #a5d6a7; }
     .quick-info-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 15px; margin: 20px 0; }
-    .info-card { background: rgba(255, 255, 255, 0.05); border: 1px solid rgba(255, 255, 255, 0.1); border-radius: 12px; padding: 1rem; text-align: center; backdrop-filter: blur(10px); transition: all 0.3s ease; box-shadow: 0 4px 15px rgba(0,0,0,0.2); }
+    .info-card { background: rgba(255, 255, 255, 0.05); border: 1px solid rgba(255, 255, 255, 0.1); border-radius: 12px; padding: 1rem; text-align: center; backdrop-filter: blur(10px); transition: all 0.3s ease; }
     .info-card:hover { transform: translateY(-5px); box-shadow: 0 8px 25px rgba(0,0,0,0.3); border-color: rgba(255, 255, 255, 0.2); }
     .info-card .metric-label { color: #94a3b8; font-size: 0.85rem; font-weight: 500; margin-bottom: 8px; }
     .info-card .metric-value { color: #ffffff; font-size: 1.4rem; font-weight: 700; text-shadow: 0 2px 4px rgba(0,0,0,0.3); }
@@ -78,7 +75,7 @@ st.markdown("""
     .risk-defensive { background: linear-gradient(135deg, #DD6B20, #c05621); }
     .risk-minimum { background: linear-gradient(135deg, #E53E3E, #c53030); }
     .risk-passed { background: linear-gradient(135deg, #38A169, #2f855a); }
-    .event-compact { display: flex; align-items: center; padding: 0.5rem 0.75rem; margin: 0.25rem 0; border-radius: 8px; background: rgba(255, 255, 255, 0.03); border-left: 4px solid; font-size: 0.9rem; transition: all 0.2s ease; }
+    .event-compact { display: flex; align-items: center; padding: 0.5rem 0.75rem; margin: 0.25rem 0; border-radius: 8px; background: rgba(255, 255, 255, 0.03); border-left: 4px solid; font-size: 0.9rem; }
     .event-compact:hover { background: rgba(255, 255, 255, 0.08); transform: translateX(5px); }
     .event-high { border-left-color: #ef4444; background: rgba(239, 68, 68, 0.1); }
     .event-medium { border-left-color: #f59e0b; background: rgba(245, 158, 11, 0.1); }
@@ -93,9 +90,11 @@ st.markdown("""
     .stTabs [data-baseweb="tab-list"] { gap: 8px; background: rgba(30, 41, 59, 0.5); border-radius: 12px; padding: 4px; }
     .stTabs [data-baseweb="tab"] { background: rgba(255, 255, 255, 0.05); border-radius: 8px; color: #94a3b8; border: none; padding: 0.75rem 1.5rem; }
     .stTabs [aria-selected="true"] { background: linear-gradient(135deg, #3b82f6, #1e40af) !important; color: white !important; }
-    .stButton button { background: linear-gradient(135deg, #3b82f6, #1e40af); border: none; border-radius: 12px; color: white; font-weight: 600; padding: 0.75rem 2rem; transition: all 0.3s ease; box-shadow: 0 4px 15px rgba(59, 130, 246, 0.3); }
+    .stButton button { background: linear-gradient(135deg, #3b82f6, #1e40af); border: none; border-radius: 12px; color: white; font-weight: 600; padding: 0.75rem 2rem; transition: all 0.3s ease; box-shadow: 0 4px 16px rgba(59, 130, 246, 0.4); }
     .stButton button:hover { transform: translateY(-2px); box-shadow: 0 8px 25px rgba(59, 130, 246, 0.4); }
-    h1 { color: #f1f5f9; text-shadow: 0 2px 4px rgba(0,0,0,0.3); } h2 { color: #e2e8f0; margin-bottom: 1rem; } h3 { color: #cbd5e1; }
+    h1 { color: #f1f5f9; text-shadow: 0 2px 4px rgba(0,0,0,0.3); }
+    h2 { color: #e2e8f0; margin-bottom: 1rem; }
+    h3 { color: #cbd5e1; }
     .weekend-notice { background: linear-gradient(135deg, rgba(99, 102, 241, 0.2), rgba(67, 56, 202, 0.1)); border: 2px solid #6366f1; border-radius: 16px; padding: 2rem; text-align: center; color: #c7d2fe; }
     .week-day-card { background: rgba(255, 255, 255, 0.05); border: 1px solid rgba(255, 255, 255, 0.1); border-radius: 12px; padding: 1rem; margin: 0.5rem 0; }
 </style>
@@ -216,48 +215,22 @@ def get_headlines_from_db(limit=50):
     return items
 
 # --- TRADING PLAN FUNCTIONS ---
-
-# --- NEW: Corrected Earnings Report Functionality ---
 @st.cache_data(ttl=3600)
-def fetch_and_format_earnings(target_date):
-    """
-    Scrapes Yahoo Finance for earnings data for a specific date.
-    This replaces the old, broken API call.
-    """
-    date_str = target_date.strftime('%Y-%m-%d')
-    url = f"https://finance.yahoo.com/calendar/earnings?day={date_str}"
-    headers = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
-    }
-    earnings_list = []
+def get_earnings_data(date_str):
+    url = f"https://www.earningswhispers.com/api/caldata/{date_str}"
+    headers = {'User-Agent': 'Mozilla/5.0'}
     try:
         response = requests.get(url, headers=headers, timeout=10)
         response.raise_for_status()
-        
-        soup = BeautifulSoup(response.text, 'lxml')
-        
-        # Find the table containing the earnings data
-        table = soup.find('table', {'class': 'W(100%)'})
-        if not table:
-            return [] # No earnings table found for this day
+        return response.json()
+    except (requests.RequestException, ValueError): return None
 
-        rows = table.find('tbody').find_all('tr')
-        
-        for row in rows:
-            cells = row.find_all('td')
-            if len(cells) > 2:
-                ticker = cells[0].find('a').text.strip()
-                company = cells[1].text.strip()
-                earnings_list.append({'ticker': ticker, 'company': company})
-                
-    except requests.RequestException as e:
-        st.toast(f"Error fetching earnings data: {e}", icon="⚠️")
-        return []
-    except Exception as e:
-        st.toast(f"Error parsing earnings data: {e}", icon="⚠️")
-        return []
-        
-    return earnings_list
+@st.cache_data(ttl=3600)
+def fetch_and_format_earnings(target_date):
+    date_str = target_date.strftime('%Y%m%d')
+    data = get_earnings_data(date_str)
+    if data: return [{'company': item.get('company', 'N/A')} for item in data]
+    return []
 
 @st.cache_data(ttl=600)
 def get_events_from_db():
@@ -371,7 +344,7 @@ def display_sidebar_risk_management():
     elif profit_loss >= st.session_state.eval_target: suggested_risk, reason, risk_class = 0, "Target reached! Stop trading.", "risk-passed"
     else: suggested_risk, reason, risk_class = st.session_state.standard_risk, "Standard operating conditions.", "risk-normal"
 
-    st.sidebar.markdown(f'<div class="risk-output {risk_class}"><strong>Next Trade Risk: ${int(suggest_risk)}</strong><br><small>{reason}</small></div>', unsafe_allow_html=True)
+    st.sidebar.markdown(f'<div class="risk-output {risk_class}"><strong>Next Trade Risk: ${int(suggested_risk)}</strong><br><small>{reason}</small></div>', unsafe_allow_html=True)
 def display_sidebar_payout_planner():
     # This function remains unchanged
     st.sidebar.header("💰 Payout Planner")
@@ -446,10 +419,7 @@ def display_week_view(selected_date, records):
         st.markdown(f'<div class="week-day-card" style="{card_style}"><h4>{emoji} {day.strftime("%A, %B %d")} - {plan}</h4><p style="margin:0.5rem 0; font-size:0.9rem; opacity:0.8;">{reason}</p></div>', unsafe_allow_html=True)
         earnings = fetch_and_format_earnings(day)
         if earnings:
-            # --- UPDATED: Display richer earnings data ---
-            with st.expander(f"💰 Earnings Reports ({len(earnings)})"):
-                companies_str = ", ".join([f"{item['company']} ({item['ticker']})" for item in earnings])
-                st.write(companies_str)
+            with st.expander(f"💰 Earnings Reports ({len(earnings)})"): st.write(", ".join([item['company'] for item in earnings]))
         high_impact = [e for e in day_events if parse_impact(e.get('impact', '')) == 'High' or any(k.lower() in e.get('event', '').lower() for k in FORCED_HIGH_IMPACT_KEYWORDS)]
         if high_impact:
             with st.expander(f"🚨 High Impact Events ({len(high_impact)})"):
@@ -499,15 +469,10 @@ def main():
     if st.sidebar.button("🔄 Fetch Economic Data", type="primary"):
         with st.spinner("Fetching data from Forex Factory..."):
             try:
-                # Use capture_output to see stdout/stderr from the script
-                result = subprocess.run([sys.executable, "ffscraper.py"], check=True, capture_output=True, text=True)
+                subprocess.run([sys.executable, "ffscraper.py"], check=True, capture_output=True, text=True)
                 st.sidebar.success("✅ Economic Data Fetched!")
-                st.sidebar.code(result.stdout) # Show scraper output for debugging
                 st.cache_data.clear() # Clear all cached data
                 st.rerun()
-            except subprocess.CalledProcessError as e:
-                st.sidebar.error(f"❌ Scraper failed with exit code {e.returncode}")
-                st.sidebar.code(f"STDOUT:\n{e.stdout}\n\nSTDERR:\n{e.stderr}") # Show detailed error
             except Exception as e:
                 st.sidebar.error(f"❌ Update failed: {e}")
     
@@ -558,9 +523,7 @@ def main():
                 earnings_today = fetch_and_format_earnings(selected_date)
                 if earnings_today:
                     with st.container(height=250):
-                         # --- UPDATED: Display richer earnings data ---
-                        for item in earnings_today:
-                            st.markdown(f"• **{item['company']}** `({item['ticker']})`")
+                        for item in earnings_today: st.markdown(f"• **{item['company']}**")
                 else:
                     st.markdown("*No major earnings reports scheduled.*")
         else: # Week view
