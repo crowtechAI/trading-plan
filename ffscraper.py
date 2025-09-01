@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """
 Forex Factory Economic Calendar Scraper
-Updated version to handle recent website HTML structure changes.
-Uses WebDriverWait for more reliable loading.
+Rectified version for Streamlit Cloud, based on the working local script.
 """
+
 import time
 import argparse
 import pandas as pd
@@ -11,54 +11,42 @@ from datetime import datetime, timedelta
 import pytz
 import csv
 import sys
-import calendar
 
+# It's crucial that webdriver-manager is listed in your requirements.txt
 from selenium import webdriver
 from selenium.webdriver.common.by import By
 from selenium.webdriver.chrome.service import Service
 from webdriver_manager.chrome import ChromeDriverManager
-from selenium.common.exceptions import NoSuchElementException, TimeoutException
-from selenium.webdriver.support.ui import WebDriverWait
-from selenium.webdriver.support import expected_conditions as EC
+from selenium.common.exceptions import NoSuchElementException
 
-# --- NEW: Updated class name mapping for the new Forex Factory HTML ---
-# The old 'calendar__cell' structure is gone. Now we map direct class names.
+# Using the consistent mapping from your more detailed script
 ALLOWED_ELEMENT_TYPES = {
-    "date": "date",
-    "time": "time",
-    "currency": "currency",
-    "impact": "impact",
-    "event": "event",
-    "actual": "actual",
-    "forecast": "forecast",
-    "previous": "previous"
-}
-
-# Month name mappings for Forex Factory URLs (unchanged)
-MONTH_NAMES = {
-    1: 'jan', 2: 'feb', 3: 'mar', 4: 'apr', 5: 'may', 6: 'jun',
-    7: 'jul', 8: 'aug', 9: 'sep', 10: 'oct', 11: 'nov', 12: 'dec'
-}
-FULL_MONTH_NAMES = {
-    'january': 'jan', 'february': 'feb', 'march': 'mar', 'april': 'apr',
-    'may': 'may', 'june': 'jun', 'july': 'jul', 'august': 'aug',
-    'september': 'sep', 'october': 'oct', 'november': 'nov', 'december': 'dec'
+    "calendar__cell calendar__date": "date",
+    "calendar__cell calendar__time": "time",
+    "calendar__cell calendar__currency": "currency",
+    "calendar__cell calendar__impact": "impact",
+    "calendar__cell calendar__event": "event",
+    "calendar__cell calendar__actual": "actual",
+    "calendar__cell calendar__forecast": "forecast",
+    "calendar__cell calendar__previous": "previous"
 }
 
 def init_driver() -> webdriver.Chrome:
-    """Initialize a lightweight Chrome WebDriver."""
+    """Initialize a lightweight Chrome WebDriver based on the working local script."""
     print("Initializing WebDriver...")
     options = webdriver.ChromeOptions()
+    # Using the same simple and effective options as the working local script
     options.add_argument("--headless")
     options.add_argument("--no-sandbox")
     options.add_argument("--disable-dev-shm-usage")
     options.add_argument("--disable-gpu")
     options.add_argument("window-size=1920x1080")
     options.add_argument(
-        "user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36"
+        "--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
     )
 
     try:
+        # Using webdriver-manager is more reliable across different environments
         service = Service(ChromeDriverManager().install())
         driver = webdriver.Chrome(service=service, options=options)
         print("WebDriver initialized successfully.")
@@ -69,46 +57,45 @@ def init_driver() -> webdriver.Chrome:
         raise
 
 def convert_gmt_to_gmt_minus_4(time_str, date_str):
-    """Convert GMT time to America/New_York time (handles DST automatically)."""
-    if not time_str or time_str.lower() == "empty" or not date_str or date_str.lower() == "empty":
+    """Convert GMT time to GMT-4 (e.g., New York time during DST)."""
+    if not time_str or time_str == "empty" or not date_str or date_str == "empty":
         return time_str
 
     special_times = ["all day", "day 1", "day 2", "tentative", "holiday", "tbd"]
-    if any(st in time_str.lower() for st in special_times):
-        return time_str.lower()
+    if time_str.lower() in special_times:
+        return time_str
 
     try:
         date_obj = datetime.strptime(date_str, "%d/%m/%Y").date()
-        time_obj = datetime.strptime(time_str.upper(), "%I:%M%p").time()
+        time_obj = datetime.strptime(time_str, "%I:%M%p").time()
         
         gmt_datetime = datetime.combine(date_obj, time_obj)
         gmt_datetime = pytz.UTC.localize(gmt_datetime)
         
-        target_tz = pytz.timezone('America/New_York')
+        # Using a named timezone like 'America/New_York' is better practice
+        # as it handles Daylight Saving Time automatically. Etc/GMT+4 is a fixed offset.
+        target_tz = pytz.timezone('America/New_York') # Equivalent to GMT-5/GMT-4
         target_datetime = gmt_datetime.astimezone(target_tz)
         
         return target_datetime.strftime("%I:%M%p").lower().lstrip('0')
     except (ValueError, TypeError) as e:
-        print(f"Warning: Could not convert time '{time_str}' for date '{date_str}': {e}. Using original.")
+        print(f"Error converting time {time_str} for date {date_str}: {e}")
         return time_str
 
 def get_current_week_range():
     """Get the Monday-Friday range for the current or upcoming trading week."""
     today = datetime.now()
-    current_weekday = today.weekday()
-    if current_weekday >= 5:
+    current_weekday = today.weekday()  # Monday is 0, Sunday is 6
+
+    if current_weekday >= 5:  # Saturday (5) or Sunday (6)
         days_until_monday = 7 - current_weekday
         monday = today + timedelta(days=days_until_monday)
     else:
         days_since_monday = current_weekday
         monday = today - timedelta(days=days_since_monday)
+
     friday = monday + timedelta(days=4)
     return monday.date(), friday.date()
-
-def get_week_months(week_start, week_end):
-    """Get unique months that the trading week spans."""
-    months = {d.month for d in (week_start, week_end)}
-    return sorted(list(months))
 
 def is_date_in_current_week(date_str, week_start, week_end):
     """Check if a date string is within the target trading week."""
@@ -118,11 +105,24 @@ def is_date_in_current_week(date_str, week_start, week_end):
     except (ValueError, TypeError):
         return False
 
+def scroll_to_end(driver):
+    """Scroll down the page to ensure all dynamic content is loaded."""
+    print("Scrolling to load all events...")
+    previous_position = None
+    time.sleep(2) # Initial wait
+    while True:
+        current_position = driver.execute_script("return window.pageYOffset;")
+        driver.execute_script("window.scrollTo(0, window.pageYOffset + 500);")
+        time.sleep(1.5)  # Allow time for content to load
+        if current_position == previous_position:
+            print("Finished scrolling.")
+            break
+        previous_position = current_position
+
 def clean_cell_text(element):
     """Extract clean text from a table cell."""
     try:
-        # Impact is now in a span with a title
-        if "impact" in element.get_attribute("class"):
+        if "calendar__impact" in element.get_attribute("class"):
             impact_span = element.find_element(By.TAG_NAME, "span")
             if impact_span:
                 return impact_span.get_attribute("title").replace(" Impact Expected", "")
@@ -133,73 +133,61 @@ def clean_cell_text(element):
         return "empty"
 
 def parse_table(driver, week_filter=False):
-    """Parse the main calendar table for economic events using the new HTML structure."""
+    """Parse the main calendar table for economic events."""
     try:
-        # --- CHANGED: Wait for the new table class name to be present ---
-        wait = WebDriverWait(driver, 20)
-        table = wait.until(EC.presence_of_element_located((By.CLASS_NAME, "calendar--table")))
-    except TimeoutException:
-        print("CRITICAL ERROR: Timed out waiting for '.calendar--table' element.")
+        table = driver.find_element(By.CLASS_NAME, "calendar__table")
+    except NoSuchElementException:
+        print("CRITICAL ERROR: Could not find the '.calendar__table' element.")
         print("This suggests the page was blocked or did not load correctly.")
+        print("Saving debug files...")
         with open("debug_page_source.html", "w", encoding='utf-8') as f:
             f.write(driver.page_source)
         driver.save_screenshot("debug_screenshot.png")
-        print("Saved 'debug_page_source.html' and 'debug_screenshot.png'. Check for a CAPTCHA.")
+        print("Saved 'debug_page_source.html' and 'debug_screenshot.png'. Check for a CAPTCHA or block page.")
         return []
 
     data = []
     current_date = None
     last_time = "empty"
 
-    week_start, week_end = (None, None)
+    week_start, week_end = None, None
     if week_filter:
         week_start, week_end = get_current_week_range()
         print(f"Filtering for trading week: {week_start.strftime('%d/%m/%Y')} to {week_end.strftime('%d/%m/%Y')}")
 
-    # --- CHANGED: Iterate over `tr` elements with the correct class ---
-    for row in table.find_elements(By.XPATH, ".//tr[contains(@class, 'calendar__row')]"):
-        # Skip the header rows
-        if "calendar__row--header" in row.get_attribute("class"):
+    for row in table.find_elements(By.TAG_NAME, "tr"):
+        if "calendar__row--day-breaker" in row.get_attribute("class"):
             continue
 
-        row_data = {v: "empty" for v in ALLOWED_ELEMENT_TYPES.values()}
-        
-        # --- CHANGED: Iterate over `td` cells instead of generic 'calendar__cell' ---
-        cells = row.find_elements(By.TAG_NAME, "td")
-        
-        # Extract date from the special date row
-        if "divider" in row.get_attribute("class"):
-            try:
-                date_text = cells[0].text.strip()
-                current_year = datetime.now().year
-                parsed_date = datetime.strptime(date_text + f" {current_year}", "%A, %B %d %Y")
-                current_date = parsed_date.strftime("%d/%m/%Y")
-            except (ValueError, IndexError):
-                pass
-            continue # Move to the next row after processing date
+        row_data = {key: "empty" for key in ALLOWED_ELEMENT_TYPES.values()}
+        cells = row.find_elements(By.CLASS_NAME, "calendar__cell")
+        has_time = False
 
-        # Process a regular event row
-        row_data["date"] = current_date if current_date else "empty"
-        
         for cell in cells:
-            class_name = cell.get_attribute("class").split(' ')[-1] # Get the most specific class
+            class_name = cell.get_attribute("class").strip()
             key = ALLOWED_ELEMENT_TYPES.get(class_name)
-            
+
             if key:
                 value = clean_cell_text(cell)
+                if key == "date" and value and value != "empty":
+                    try:
+                        parsed_date = datetime.strptime(value + f" {datetime.now().year}", "%a %b %d %Y")
+                        current_date = parsed_date.strftime("%d/%m/%Y")
+                        value = current_date
+                    except ValueError:
+                        current_date = "invalid"
+                elif key == "time" and value and value != "empty":
+                    converted_time = convert_gmt_to_gmt_minus_4(value, current_date)
+                    last_time = converted_time
+                    has_time = True
+                    value = converted_time
                 row_data[key] = value
 
-        # Carry over time if the time cell is empty
-        if row_data.get("time") == "empty":
-             row_data["time"] = last_time
-        else:
-            last_time = row_data["time"]
+        if not has_time:
+            row_data["time"] = last_time
+        row_data["date"] = current_date if current_date else "empty"
 
-        # Convert GMT time from FF to ET
-        row_data["time"] = convert_gmt_to_gmt_minus_4(row_data["time"], row_data["date"])
-
-        # Add row if it contains any event data
-        if row_data.get("event") and row_data.get("event") != "empty":
+        if any(v != "empty" for k, v in row_data.items() if k != "date"):
             if not week_filter or (current_date and is_date_in_current_week(current_date, week_start, week_end)):
                 data.append(row_data)
 
@@ -220,94 +208,48 @@ def save_to_csv(events, filename):
         writer.writerows(events)
     print(f"Data saved successfully to {filename}")
 
-def scrape_multiple_months(months_to_scrape, week_filter=False, output_file="latest_forex_data.csv"):
-    """Scrape data from multiple months and combine results."""
-    all_events = []
-    driver = None
-    
-    try:
-        driver = init_driver()
-        
-        for month_param in months_to_scrape:
-            url = f"https://www.forexfactory.com/calendar?month={month_param}"
-            print(f"Scraping URL: {url}")
-            
-            driver.get(url)
-            events = parse_table(driver, week_filter=week_filter)
-            all_events.extend(events)
-            time.sleep(2) # Small delay between requests
-        
-        if all_events:
-            unique_events = list({tuple(d.items()): d for d in all_events}.values())
-            print(f"Total unique events after deduplication: {len(unique_events)}")
-            save_to_csv(unique_events, output_file)
-            return unique_events
-        else:
-            print("No events found across all months.")
-            return []
-            
-    except Exception as e:
-        print(f"An error occurred during multi-month scraping: {e}")
-        raise
-    finally:
-        if driver:
-            driver.quit()
-            print("WebDriver closed successfully.")
-
-def determine_months_to_scrape(args):
-    """Determine which months need to be scraped based on arguments."""
-    if args.month:
-        month_name = args.month.lower()
-        return [FULL_MONTH_NAMES.get(month_name, month_name)]
-    
-    if args.week:
-        week_start, week_end = get_current_week_range()
-        months_needed = get_week_months(week_start, week_end)
-        
-        month_params = []
-        for month_num in months_needed:
-            month_params.append("this" if month_num == datetime.now().month else MONTH_NAMES[month_num])
-        print(f"Week spans months: {months_needed}, using parameters: {month_params}")
-        return list(set(month_params)) # Use set to avoid duplicates like ['this', 'this']
-    
-    # Default: scrape current month and next month if we are in the last week
-    today = datetime.now()
-    _, days_in_month = calendar.monthrange(today.year, today.month)
-    months_to_scrape = ["this"]
-    if (days_in_month - today.day) <= 7:
-        next_month_num = (today.month % 12) + 1
-        months_to_scrape.append(MONTH_NAMES[next_month_num])
-        print(f"Near end of month, will also scrape next month: {MONTH_NAMES[next_month_num]}")
-    return months_to_scrape
-
 def main():
+    """Main function to run the scraper."""
     parser = argparse.ArgumentParser(description="Scrape Forex Factory calendar.")
-    parser.add_argument("--month", type=str, help="Target month (e.g. june, july).")
+    parser.add_argument("--month", type=str, help="Target month (e.g. June, July). Defaults to current month.")
     parser.add_argument("--week", action="store_true", help="Only scrape current trading week (Mon-Fri).")
     parser.add_argument("--output", default="latest_forex_data.csv", help="Output CSV filename.")
     args = parser.parse_args()
 
+    # Determine URL parameter based on arguments
+    url_param = "this" if not args.month else args.month.lower()
+    if args.week and not args.month:
+        today = datetime.now()
+        week_start, _ = get_current_week_range()
+        # If it's the weekend and the week starts next month, navigate to that month
+        if today.month != week_start.month:
+            url_param = week_start.strftime("%b").lower() # e.g., 'aug'
+
+    url = f"https://www.forexfactory.com/calendar?month={url_param}"
+    print(f"Scraping URL: {url}")
+
+    driver = None
     try:
-        months_to_scrape = determine_months_to_scrape(args)
-        print(f"Will scrape month parameter(s): {months_to_scrape}")
-        
-        events = scrape_multiple_months(
-            months_to_scrape, 
-            week_filter=args.week, 
-            output_file=args.output
-        )
+        driver = init_driver()
+        driver.get(url)
+        scroll_to_end(driver)
+        events = parse_table(driver, week_filter=args.week)
         
         if events:
+            save_to_csv(events, args.output)
             print("\n=== Scraping completed successfully ===")
         else:
-            print("\n--- No events were scraped. Please check for errors above. ---")
+            print("\n--- No events were scraped. ---")
 
     except KeyboardInterrupt:
         print("\nScraping interrupted by user.")
     except Exception as e:
         print(f"\nAn unrecoverable error occurred: {str(e)}")
-        import traceback
-        traceback.print_exc()
+        # In case of error, the driver quit might be skipped, so ensure it happens
+    finally:
+        if driver:
+            driver.quit()
+            print("WebDriver closed successfully.")
 
 if __name__ == "__main__":
     main()
