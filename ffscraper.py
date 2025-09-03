@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Forex Factory Economic Calendar Scraper
-Fixed version with improved month navigation for end-of-month scenarios.
+Rectified version for Streamlit Cloud, based on the working local script.
 """
 
 import time
@@ -11,7 +11,6 @@ from datetime import datetime, timedelta
 import pytz
 import csv
 import sys
-import calendar
 
 # It's crucial that webdriver-manager is listed in your requirements.txt
 from selenium import webdriver
@@ -30,18 +29,6 @@ ALLOWED_ELEMENT_TYPES = {
     "calendar__cell calendar__actual": "actual",
     "calendar__cell calendar__forecast": "forecast",
     "calendar__cell calendar__previous": "previous"
-}
-
-# Month name mappings for Forex Factory URLs
-MONTH_NAMES = {
-    1: 'jan', 2: 'feb', 3: 'mar', 4: 'apr', 5: 'may', 6: 'jun',
-    7: 'jul', 8: 'aug', 9: 'sep', 10: 'oct', 11: 'nov', 12: 'dec'
-}
-
-FULL_MONTH_NAMES = {
-    'january': 'jan', 'february': 'feb', 'march': 'mar', 'april': 'apr',
-    'may': 'may', 'june': 'jun', 'july': 'jul', 'august': 'aug',
-    'september': 'sep', 'october': 'oct', 'november': 'nov', 'december': 'dec'
 }
 
 def init_driver() -> webdriver.Chrome:
@@ -109,15 +96,6 @@ def get_current_week_range():
 
     friday = monday + timedelta(days=4)
     return monday.date(), friday.date()
-
-def get_week_months(week_start, week_end):
-    """Get unique months that the trading week spans."""
-    months = set()
-    current_date = week_start
-    while current_date <= week_end:
-        months.add(current_date.month)
-        current_date += timedelta(days=1)
-    return sorted(months)
 
 def is_date_in_current_week(date_str, week_start, week_end):
     """Check if a date string is within the target trading week."""
@@ -193,15 +171,7 @@ def parse_table(driver, week_filter=False):
                 value = clean_cell_text(cell)
                 if key == "date" and value and value != "empty":
                     try:
-                        # Parse the date and handle year wrapping
-                        current_year = datetime.now().year
-                        parsed_date = datetime.strptime(value + f" {current_year}", "%a %b %d %Y")
-                        
-                        # Handle year boundary: if parsed date is more than 6 months ago, it's probably next year
-                        today = datetime.now()
-                        if (today - parsed_date).days > 180:
-                            parsed_date = parsed_date.replace(year=current_year + 1)
-                        
+                        parsed_date = datetime.strptime(value + f" {datetime.now().year}", "%a %b %d %Y")
                         current_date = parsed_date.strftime("%d/%m/%Y")
                         value = current_date
                     except ValueError:
@@ -238,94 +208,6 @@ def save_to_csv(events, filename):
         writer.writerows(events)
     print(f"Data saved successfully to {filename}")
 
-def scrape_multiple_months(months_to_scrape, week_filter=False, output_file="latest_forex_data.csv"):
-    """Scrape data from multiple months and combine results."""
-    all_events = []
-    driver = None
-    
-    try:
-        driver = init_driver()
-        
-        for month_param in months_to_scrape:
-            url = f"https://www.forexfactory.com/calendar?month={month_param}"
-            print(f"Scraping URL: {url}")
-            
-            driver.get(url)
-            scroll_to_end(driver)
-            events = parse_table(driver, week_filter=week_filter)
-            all_events.extend(events)
-            
-            # Small delay between requests
-            time.sleep(2)
-        
-        if all_events:
-            # Remove duplicates based on all fields
-            seen = set()
-            unique_events = []
-            for event in all_events:
-                event_tuple = tuple(event.values())
-                if event_tuple not in seen:
-                    seen.add(event_tuple)
-                    unique_events.append(event)
-            
-            print(f"Total unique events after deduplication: {len(unique_events)}")
-            save_to_csv(unique_events, output_file)
-            return unique_events
-        else:
-            print("No events found across all months.")
-            return []
-            
-    except Exception as e:
-        print(f"Error during multi-month scraping: {e}")
-        raise
-    finally:
-        if driver:
-            driver.quit()
-            print("WebDriver closed successfully.")
-
-def determine_months_to_scrape(args):
-    """Determine which months need to be scraped based on arguments."""
-    if args.month:
-        # User specified a specific month
-        month_name = args.month.lower()
-        if month_name in FULL_MONTH_NAMES:
-            return [FULL_MONTH_NAMES[month_name]]
-        else:
-            return [month_name]  # Assume it's already in correct format
-    
-    if args.week:
-        # For week filtering, determine which months the trading week spans
-        week_start, week_end = get_current_week_range()
-        months_needed = get_week_months(week_start, week_end)
-        
-        # Convert month numbers to Forex Factory format
-        month_params = []
-        for month_num in months_needed:
-            if month_num == datetime.now().month:
-                month_params.append("this")
-            else:
-                month_params.append(MONTH_NAMES[month_num])
-        
-        print(f"Week spans months: {months_needed}, using parameters: {month_params}")
-        return month_params
-    
-    # Default case: check if we need current and/or next month
-    today = datetime.now()
-    current_month = today.month
-    
-    # If we're in the last week of the month, also scrape next month
-    days_in_current_month = calendar.monthrange(today.year, current_month)[1]
-    days_remaining = days_in_current_month - today.day
-    
-    months_to_scrape = ["this"]
-    
-    if days_remaining <= 7:  # Last week of month
-        next_month = current_month + 1 if current_month < 12 else 1
-        months_to_scrape.append(MONTH_NAMES[next_month])
-        print(f"Near end of month, will also scrape next month: {MONTH_NAMES[next_month]}")
-    
-    return months_to_scrape
-
 def main():
     """Main function to run the scraper."""
     parser = argparse.ArgumentParser(description="Scrape Forex Factory calendar.")
@@ -334,17 +216,27 @@ def main():
     parser.add_argument("--output", default="latest_forex_data.csv", help="Output CSV filename.")
     args = parser.parse_args()
 
+    # Determine URL parameter based on arguments
+    url_param = "this" if not args.month else args.month.lower()
+    if args.week and not args.month:
+        today = datetime.now()
+        week_start, _ = get_current_week_range()
+        # If it's the weekend and the week starts next month, navigate to that month
+        if today.month != week_start.month:
+            url_param = week_start.strftime("%b").lower() # e.g., 'aug'
+
+    url = f"https://www.forexfactory.com/calendar?month={url_param}"
+    print(f"Scraping URL: {url}")
+
+    driver = None
     try:
-        months_to_scrape = determine_months_to_scrape(args)
-        print(f"Will scrape months: {months_to_scrape}")
-        
-        events = scrape_multiple_months(
-            months_to_scrape, 
-            week_filter=args.week, 
-            output_file=args.output
-        )
+        driver = init_driver()
+        driver.get(url)
+        scroll_to_end(driver)
+        events = parse_table(driver, week_filter=args.week)
         
         if events:
+            save_to_csv(events, args.output)
             print("\n=== Scraping completed successfully ===")
         else:
             print("\n--- No events were scraped. ---")
@@ -353,6 +245,11 @@ def main():
         print("\nScraping interrupted by user.")
     except Exception as e:
         print(f"\nAn unrecoverable error occurred: {str(e)}")
+        # In case of error, the driver quit might be skipped, so ensure it happens
+    finally:
+        if driver:
+            driver.quit()
+            print("WebDriver closed successfully.")
 
 if __name__ == "__main__":
     main()
