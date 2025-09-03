@@ -11,6 +11,7 @@ import pymongo
 import requests
 import json
 from openai import OpenAI
+from subprocess import CalledProcessError # <-- IMPORT THIS
 
 # --- CONFIGURATION ---
 st.set_page_config(
@@ -469,12 +470,44 @@ def main():
     if st.sidebar.button("🔄 Fetch Economic Data", type="primary"):
         with st.spinner("Fetching data from Forex Factory..."):
             try:
-                subprocess.run([sys.executable, "ffscraper.py"], check=True, capture_output=True, text=True)
+                # The command to run the external scraper script
+                command = [sys.executable, "ffscraper.py"]
+                
+                # Run the script, capture output, and check for errors
+                result = subprocess.run(
+                    command, 
+                    check=True, 
+                    capture_output=True, 
+                    text=True,
+                    encoding='utf-8' # Explicitly set encoding for wider compatibility
+                )
+                
                 st.sidebar.success("✅ Economic Data Fetched!")
+                st.sidebar.info("Output from scraper:")
+                st.sidebar.code(result.stdout, language="bash") # Show success output
+                
                 st.cache_data.clear() # Clear all cached data
                 st.rerun()
+
+            # --- START: MODIFIED ERROR HANDLING ---
+            except FileNotFoundError:
+                st.sidebar.error("❌ Error: 'ffscraper.py' not found.")
+                st.sidebar.info("Please ensure the scraper script is in the same directory as the main app.")
+            
+            except CalledProcessError as e:
+                st.sidebar.error(f"❌ Scraper script failed with exit code {e.returncode}.")
+                # Display the error output from the script, which is crucial for debugging
+                st.sidebar.write("Error details (stderr):")
+                st.sidebar.code(e.stderr, language="bash")
+                # Also display any standard output it might have produced before crashing
+                if e.stdout:
+                    st.sidebar.write("Output before error (stdout):")
+                    st.sidebar.code(e.stdout, language="bash")
+
             except Exception as e:
-                st.sidebar.error(f"❌ Update failed: {e}")
+                # A general fallback for any other unexpected errors
+                st.sidebar.error(f"❌ An unexpected error occurred: {e}")
+            # --- END: MODIFIED ERROR HANDLING ---
     
     display_sidebar_risk_management()
     st.sidebar.markdown("---")
